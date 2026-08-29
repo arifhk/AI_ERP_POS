@@ -3,8 +3,9 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 # Local development. For PostgreSQL later:
 # DATABASE_URL = "postgresql+asyncpg://user:password@localhost:5432/erp_pos"
