@@ -23,6 +23,17 @@ app = FastAPI(
 )
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
+# ফ্রন্টএন্ডকে ডেটা নেওয়ার পারমিশন দেওয়া
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(tenants.router, prefix="/tenants", tags=["Tenants"])
 app.include_router(branches.router, prefix="/branches", tags=["Branches"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
