@@ -5,31 +5,30 @@ import Link from 'next/link';
 
 const API_BASE = 'http://localhost:8000';
 
-type Product = {
+type Tenant = {
   id: number;
   name: string;
-  barcode: string;
-  price: number;
-  stock_quantity: number;
+  slug: string;
+  email?: string | null;
+  phone?: string | null;
   is_active: boolean;
 };
 
 const emptyForm = {
   name: '',
-  barcode: '',
-  price: '',
-  stock_quantity: '',
+  slug: '',
+  is_active: true,
 };
 
-function formatPrice(price: number) {
-  return `৳ ${price.toLocaleString('en-BD', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+function parseApiError(detail: unknown, fallback: string) {
+  if (typeof detail === 'string') {
+    return detail;
+  }
+  return fallback;
 }
 
-export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+export default function TenantsPage() {
+  const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -37,14 +36,13 @@ export default function ProductsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
 
-  async function loadProducts() {
-    const response = await fetch(`${API_BASE}/products/`);
+  async function loadTenants() {
+    const response = await fetch(`${API_BASE}/tenants/`);
     if (!response.ok) {
-      throw new Error('Failed to load products');
+      throw new Error('Failed to load tenants');
     }
-
     const data: unknown = await response.json();
-    setProducts(Array.isArray(data) ? (data as Product[]) : []);
+    setTenants(Array.isArray(data) ? (data as Tenant[]) : []);
   }
 
   useEffect(() => {
@@ -52,10 +50,10 @@ export default function ProductsPage() {
 
     async function initialLoad() {
       try {
-        await loadProducts();
+        await loadTenants();
       } catch {
         if (!cancelled) {
-          setError('Unable to load products from the server.');
+          setError('Unable to load tenants from the server.');
         }
       } finally {
         if (!cancelled) {
@@ -91,27 +89,21 @@ export default function ProductsPage() {
     setFormError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/products/`, {
+      const response = await fetch(`${API_BASE}/tenants/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tenant_id: 1,
-          branch_id: 1,
-          is_active: true,
           name: form.name.trim(),
-          barcode: form.barcode.trim(),
-          price: Number(form.price),
-          stock_quantity: Number(form.stock_quantity),
+          slug: form.slug.trim(),
+          is_active: form.is_active,
         }),
       });
 
       if (!response.ok) {
-        let message = 'Could not create the product.';
+        let message = 'Could not create the tenant.';
         try {
           const payload = (await response.json()) as { detail?: unknown };
-          if (typeof payload.detail === 'string') {
-            message = payload.detail;
-          }
+          message = parseApiError(payload.detail, message);
         } catch {
           // Keep the generic message if the error body is not JSON.
         }
@@ -120,10 +112,9 @@ export default function ProductsPage() {
 
       setModalOpen(false);
       setForm(emptyForm);
-      await loadProducts();
-      window.alert('Product added successfully!');
+      await loadTenants();
     } catch (caught) {
-      setFormError(caught instanceof Error ? caught.message : 'Could not create the product.');
+      setFormError(caught instanceof Error ? caught.message : 'Could not create the tenant.');
     } finally {
       setSubmitting(false);
     }
@@ -131,24 +122,22 @@ export default function ProductsPage() {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      {/* Sidebar Navigation */}
       <aside className="w-64 bg-gray-900 text-white flex flex-col">
         <div className="p-6 text-2xl font-bold border-b border-gray-800">
           AI ERP & POS
         </div>
         <nav className="flex-1 p-4 space-y-2">
           <Link href="/" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Dashboard</Link>
-          <Link href="/tenants" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Tenants</Link>
+          <Link href="/tenants" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">Tenants</Link>
           <Link href="/branches" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Branches</Link>
           <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Users</Link>
-          <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">Products</Link>
+          <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Products</Link>
           <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">POS</Link>
           <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Orders</Link>
           <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
         </nav>
       </aside>
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="flex items-center justify-between p-4 bg-white border-b border-gray-200">
           <div className="flex items-center">
@@ -159,9 +148,7 @@ export default function ProductsPage() {
             />
           </div>
           <div className="flex items-center space-x-4">
-            <button className="text-gray-500 hover:text-gray-700 text-xl">
-              🔔
-            </button>
+            <button className="text-gray-500 hover:text-gray-700 text-xl">🔔</button>
             <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold cursor-pointer">
               AH
             </div>
@@ -171,15 +158,15 @@ export default function ProductsPage() {
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
           <div className="mb-6 flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-semibold text-gray-800">Products</h1>
-              <p className="mt-1 text-sm text-gray-500">Manage catalog items, barcodes, pricing, and stock.</p>
+              <h1 className="text-3xl font-semibold text-gray-800">Tenants</h1>
+              <p className="mt-1 text-sm text-gray-500">Manage organizations that own branches, users, and catalogs.</p>
             </div>
             <button
               type="button"
               onClick={openModal}
               className="rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
             >
-              Add New Product
+              Add Tenant
             </button>
           </div>
 
@@ -203,44 +190,34 @@ export default function ProductsPage() {
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">ID</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Name</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Barcode</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Price</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Stock</th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Slug</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
-                      {products.length === 0 ? (
+                      {tenants.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
-                            No products found. Add a product to get started.
+                          <td colSpan={4} className="px-6 py-12 text-center text-sm text-gray-500">
+                            No tenants found. Add a tenant to get started.
                           </td>
                         </tr>
                       ) : (
-                        products.map((product) => (
-                          <tr key={product.id} className="hover:bg-gray-50">
-                            <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
-                              {product.name}
-                            </td>
-                            <td className="whitespace-nowrap px-6 py-4 font-mono text-sm text-gray-600">
-                              {product.barcode}
-                            </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-900">
-                              {formatPrice(product.price)}
-                            </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
-                              {product.stock_quantity}
-                            </td>
+                        tenants.map((tenant) => (
+                          <tr key={tenant.id} className="hover:bg-gray-50">
+                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{tenant.id}</td>
+                            <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">{tenant.name}</td>
+                            <td className="whitespace-nowrap px-6 py-4 font-mono text-sm text-gray-600">{tenant.slug}</td>
                             <td className="whitespace-nowrap px-6 py-4">
                               <span
                                 className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                                  product.is_active
+                                  tenant.is_active
                                     ? 'bg-green-100 text-green-700'
                                     : 'bg-gray-100 text-gray-600'
                                 }`}
                               >
-                                {product.is_active ? 'Active' : 'Inactive'}
+                                {tenant.is_active ? 'Active' : 'Inactive'}
                               </span>
                             </td>
                           </tr>
@@ -260,76 +237,53 @@ export default function ProductsPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="add-product-title"
+          aria-labelledby="add-tenant-title"
         >
           <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
             <div className="border-b border-gray-100 px-6 py-4">
-              <h2 id="add-product-title" className="text-lg font-semibold text-gray-900">
-                Add New Product
+              <h2 id="add-tenant-title" className="text-lg font-semibold text-gray-900">
+                Add Tenant
               </h2>
-              <p className="mt-1 text-sm text-gray-500">Enter catalog details. The item will be saved as active.</p>
+              <p className="mt-1 text-sm text-gray-500">Create an organization that can own branches and staff.</p>
             </div>
 
             <form onSubmit={(event) => void handleSubmit(event)} className="px-6 py-5">
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="product-name" className="mb-1 block text-sm font-medium text-gray-700">
+                  <label htmlFor="tenant-name" className="mb-1 block text-sm font-medium text-gray-700">
                     Name
                   </label>
                   <input
-                    id="product-name"
+                    id="tenant-name"
                     required
                     value={form.name}
                     onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="e.g. Espresso"
+                    placeholder="e.g. Plus Point Pvt. Ltd."
                   />
                 </div>
                 <div>
-                  <label htmlFor="product-barcode" className="mb-1 block text-sm font-medium text-gray-700">
-                    Barcode
+                  <label htmlFor="tenant-slug" className="mb-1 block text-sm font-medium text-gray-700">
+                    Slug
                   </label>
                   <input
-                    id="product-barcode"
+                    id="tenant-slug"
                     required
-                    value={form.barcode}
-                    onChange={(event) => setForm((current) => ({ ...current, barcode: event.target.value }))}
+                    value={form.slug}
+                    onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="e.g. 8901234567890"
+                    placeholder="e.g. plus-point"
                   />
                 </div>
-                <div>
-                  <label htmlFor="product-price" className="mb-1 block text-sm font-medium text-gray-700">
-                    Price
-                  </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700">
                   <input
-                    id="product-price"
-                    required
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.price}
-                    onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="0.00"
+                    type="checkbox"
+                    checked={form.is_active}
+                    onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked }))}
+                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                   />
-                </div>
-                <div>
-                  <label htmlFor="product-stock" className="mb-1 block text-sm font-medium text-gray-700">
-                    Stock Quantity
-                  </label>
-                  <input
-                    id="product-stock"
-                    required
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={form.stock_quantity}
-                    onChange={(event) => setForm((current) => ({ ...current, stock_quantity: event.target.value }))}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="0"
-                  />
-                </div>
+                  Is Active
+                </label>
               </div>
 
               {formError && (
@@ -350,7 +304,7 @@ export default function ProductsPage() {
                   disabled={submitting}
                   className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
                 >
-                  {submitting ? 'Saving...' : 'Save Product'}
+                  {submitting ? 'Saving...' : 'Save Tenant'}
                 </button>
               </div>
             </form>

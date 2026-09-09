@@ -5,7 +5,15 @@ import Link from 'next/link';
 
 const API_BASE = 'http://localhost:8000';
 
+function formatCurrency(amount: number) {
+  return `৳ ${amount.toLocaleString('en-BD', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 export default function Dashboard() {
+  const [totalSales, setTotalSales] = useState(0);
   const [activeBranches, setActiveBranches] = useState(0);
   const [newUsers, setNewUsers] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -16,21 +24,40 @@ export default function Dashboard() {
 
     async function loadDashboard() {
       try {
-        const [branchesRes, usersRes] = await Promise.all([
+        const [branchesRes, usersRes, statsRes] = await Promise.all([
           fetch(`${API_BASE}/branches`),
           fetch(`${API_BASE}/users`),
+          fetch(`${API_BASE}/dashboard-stats/`),
         ]);
 
-        if (!branchesRes.ok || !usersRes.ok) {
+        if (!branchesRes.ok || !usersRes.ok || !statsRes.ok) {
           throw new Error('Failed to load dashboard data');
         }
 
         const branches: unknown = await branchesRes.json();
         const users: unknown = await usersRes.json();
+        const stats: unknown = await statsRes.json();
+        const sales =
+          stats &&
+          typeof stats === 'object' &&
+          'total_sales' in stats &&
+          typeof stats.total_sales === 'number'
+            ? stats.total_sales
+            : 0;
+        const userCount =
+          stats &&
+          typeof stats === 'object' &&
+          'user_count' in stats &&
+          typeof stats.user_count === 'number'
+            ? stats.user_count
+            : Array.isArray(users)
+              ? users.length
+              : 0;
 
         if (!cancelled) {
+          setTotalSales(sales);
           setActiveBranches(Array.isArray(branches) ? branches.length : 0);
-          setNewUsers(Array.isArray(users) ? users.length : 0);
+          setNewUsers(userCount);
         }
       } catch {
         if (!cancelled) {
@@ -63,6 +90,7 @@ export default function Dashboard() {
           <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Users</Link>
           <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Products</Link>
           <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">POS</Link>
+          <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Orders</Link>
           <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
         </nav>
       </aside>
@@ -114,7 +142,7 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-gray-500">Total Sales</p>
-                      <p className="text-3xl font-bold text-gray-900">৳ 2,45,000</p>
+                      <p className="text-3xl font-bold text-gray-900">{formatCurrency(totalSales)}</p>
                     </div>
                     <div className="p-3 bg-green-100 rounded-full text-green-600 text-2xl">💰</div>
                   </div>

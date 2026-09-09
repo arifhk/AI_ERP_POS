@@ -2,10 +2,14 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from sqlalchemy import func
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-from database import init_db
+from database import get_session, init_db
 import models  # noqa: F401  — register tables on SQLModel.metadata
+from models import Order, User
 from routers import branches, orders, products, tenants, users
 
 
@@ -40,6 +44,19 @@ app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(products.router, prefix="/products", tags=["Products"])
 app.include_router(orders.router, prefix="/orders", tags=["Orders"])  # POS checkout
 
+
+
+@app.get("/dashboard-stats/")
+async def dashboard_stats(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, float | int]:
+    sales_statement = select(func.coalesce(func.sum(Order.total_amount), 0.0))
+    total_sales = (await session.exec(sales_statement)).one()
+    user_count = (await session.exec(select(func.count(User.id)))).one()
+    return {
+        "total_sales": float(total_sales or 0),
+        "user_count": int(user_count or 0),
+    }
 
 
 @app.get("/health")

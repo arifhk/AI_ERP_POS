@@ -4,32 +4,26 @@ import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 
 const API_BASE = 'http://localhost:8000';
+const ROLE_OPTIONS = ['Admin', 'Cashier', 'Manager', 'Inventory'] as const;
 
-type Product = {
+type User = {
   id: number;
   name: string;
-  barcode: string;
-  price: number;
-  stock_quantity: number;
+  email: string;
+  role: string;
+  branch_id: number | null;
   is_active: boolean;
 };
 
 const emptyForm = {
   name: '',
-  barcode: '',
-  price: '',
-  stock_quantity: '',
+  email: '',
+  role: 'Cashier',
+  branch_id: '1',
 };
 
-function formatPrice(price: number) {
-  return `৳ ${price.toLocaleString('en-BD', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+export default function UsersPage() {
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -37,14 +31,14 @@ export default function ProductsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
 
-  async function loadProducts() {
-    const response = await fetch(`${API_BASE}/products/`);
+  async function loadUsers() {
+    const response = await fetch(`${API_BASE}/users/`);
     if (!response.ok) {
-      throw new Error('Failed to load products');
+      throw new Error('Failed to load users');
     }
 
     const data: unknown = await response.json();
-    setProducts(Array.isArray(data) ? (data as Product[]) : []);
+    setUsers(Array.isArray(data) ? (data as User[]) : []);
   }
 
   useEffect(() => {
@@ -52,10 +46,10 @@ export default function ProductsPage() {
 
     async function initialLoad() {
       try {
-        await loadProducts();
+        await loadUsers();
       } catch {
         if (!cancelled) {
-          setError('Unable to load products from the server.');
+          setError('Unable to load users from the server.');
         }
       } finally {
         if (!cancelled) {
@@ -91,22 +85,21 @@ export default function ProductsPage() {
     setFormError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/products/`, {
+      const response = await fetch(`${API_BASE}/users/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenant_id: 1,
-          branch_id: 1,
           is_active: true,
           name: form.name.trim(),
-          barcode: form.barcode.trim(),
-          price: Number(form.price),
-          stock_quantity: Number(form.stock_quantity),
+          email: form.email.trim(),
+          role: form.role,
+          branch_id: Number(form.branch_id),
         }),
       });
 
       if (!response.ok) {
-        let message = 'Could not create the product.';
+        let message = 'Could not create the user.';
         try {
           const payload = (await response.json()) as { detail?: unknown };
           if (typeof payload.detail === 'string') {
@@ -120,10 +113,10 @@ export default function ProductsPage() {
 
       setModalOpen(false);
       setForm(emptyForm);
-      await loadProducts();
-      window.alert('Product added successfully!');
+      await loadUsers();
+      window.alert('User added successfully!');
     } catch (caught) {
-      setFormError(caught instanceof Error ? caught.message : 'Could not create the product.');
+      setFormError(caught instanceof Error ? caught.message : 'Could not create the user.');
     } finally {
       setSubmitting(false);
     }
@@ -131,7 +124,6 @@ export default function ProductsPage() {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      {/* Sidebar Navigation */}
       <aside className="w-64 bg-gray-900 text-white flex flex-col">
         <div className="p-6 text-2xl font-bold border-b border-gray-800">
           AI ERP & POS
@@ -140,15 +132,14 @@ export default function ProductsPage() {
           <Link href="/" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Dashboard</Link>
           <Link href="/tenants" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Tenants</Link>
           <Link href="/branches" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Branches</Link>
-          <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Users</Link>
-          <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">Products</Link>
+          <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">Users</Link>
+          <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Products</Link>
           <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">POS</Link>
           <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Orders</Link>
           <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
         </nav>
       </aside>
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="flex items-center justify-between p-4 bg-white border-b border-gray-200">
           <div className="flex items-center">
@@ -159,9 +150,7 @@ export default function ProductsPage() {
             />
           </div>
           <div className="flex items-center space-x-4">
-            <button className="text-gray-500 hover:text-gray-700 text-xl">
-              🔔
-            </button>
+            <button className="text-gray-500 hover:text-gray-700 text-xl">🔔</button>
             <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold cursor-pointer">
               AH
             </div>
@@ -171,15 +160,15 @@ export default function ProductsPage() {
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
           <div className="mb-6 flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-semibold text-gray-800">Products</h1>
-              <p className="mt-1 text-sm text-gray-500">Manage catalog items, barcodes, pricing, and stock.</p>
+              <h1 className="text-3xl font-semibold text-gray-800">Users</h1>
+              <p className="mt-1 text-sm text-gray-500">Manage staff accounts, roles, and branch assignments.</p>
             </div>
             <button
               type="button"
               onClick={openModal}
               className="rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
             >
-              Add New Product
+              Add New User
             </button>
           </div>
 
@@ -204,43 +193,43 @@ export default function ProductsPage() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Name</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Barcode</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Price</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Stock</th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Email</th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Role</th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Branch ID</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
-                      {products.length === 0 ? (
+                      {users.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
-                            No products found. Add a product to get started.
+                            No users found. Add a user to get started.
                           </td>
                         </tr>
                       ) : (
-                        products.map((product) => (
-                          <tr key={product.id} className="hover:bg-gray-50">
+                        users.map((user) => (
+                          <tr key={user.id} className="hover:bg-gray-50">
                             <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
-                              {product.name}
+                              {user.name}
                             </td>
-                            <td className="whitespace-nowrap px-6 py-4 font-mono text-sm text-gray-600">
-                              {product.barcode}
-                            </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-900">
-                              {formatPrice(product.price)}
+                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                              {user.email}
                             </td>
                             <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
-                              {product.stock_quantity}
+                              {user.role}
+                            </td>
+                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
+                              {user.branch_id ?? '—'}
                             </td>
                             <td className="whitespace-nowrap px-6 py-4">
                               <span
                                 className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                                  product.is_active
+                                  user.is_active
                                     ? 'bg-green-100 text-green-700'
                                     : 'bg-gray-100 text-gray-600'
                                 }`}
                               >
-                                {product.is_active ? 'Active' : 'Inactive'}
+                                {user.is_active ? 'Active' : 'Inactive'}
                               </span>
                             </td>
                           </tr>
@@ -260,74 +249,76 @@ export default function ProductsPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="add-product-title"
+          aria-labelledby="add-user-title"
         >
           <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
             <div className="border-b border-gray-100 px-6 py-4">
-              <h2 id="add-product-title" className="text-lg font-semibold text-gray-900">
-                Add New Product
+              <h2 id="add-user-title" className="text-lg font-semibold text-gray-900">
+                Add New User
               </h2>
-              <p className="mt-1 text-sm text-gray-500">Enter catalog details. The item will be saved as active.</p>
+              <p className="mt-1 text-sm text-gray-500">Create a staff account and assign a branch role.</p>
             </div>
 
             <form onSubmit={(event) => void handleSubmit(event)} className="px-6 py-5">
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="product-name" className="mb-1 block text-sm font-medium text-gray-700">
+                  <label htmlFor="user-name" className="mb-1 block text-sm font-medium text-gray-700">
                     Name
                   </label>
                   <input
-                    id="product-name"
+                    id="user-name"
                     required
                     value={form.name}
                     onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="e.g. Espresso"
+                    placeholder="e.g. Ayesha Rahman"
                   />
                 </div>
                 <div>
-                  <label htmlFor="product-barcode" className="mb-1 block text-sm font-medium text-gray-700">
-                    Barcode
+                  <label htmlFor="user-email" className="mb-1 block text-sm font-medium text-gray-700">
+                    Email
                   </label>
                   <input
-                    id="product-barcode"
+                    id="user-email"
                     required
-                    value={form.barcode}
-                    onChange={(event) => setForm((current) => ({ ...current, barcode: event.target.value }))}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="e.g. 8901234567890"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="product-price" className="mb-1 block text-sm font-medium text-gray-700">
-                    Price
-                  </label>
-                  <input
-                    id="product-price"
-                    required
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.price}
-                    onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))}
+                    type="email"
+                    value={form.email}
+                    onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="0.00"
+                    placeholder="e.g. ayesha@example.com"
                   />
                 </div>
                 <div>
-                  <label htmlFor="product-stock" className="mb-1 block text-sm font-medium text-gray-700">
-                    Stock Quantity
+                  <label htmlFor="user-role" className="mb-1 block text-sm font-medium text-gray-700">
+                    Role
+                  </label>
+                  <select
+                    id="user-role"
+                    value={form.role}
+                    onChange={(event) => setForm((current) => ({ ...current, role: event.target.value }))}
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {ROLE_OPTIONS.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="user-branch" className="mb-1 block text-sm font-medium text-gray-700">
+                    Branch ID
                   </label>
                   <input
-                    id="product-stock"
+                    id="user-branch"
                     required
                     type="number"
-                    min="0"
+                    min="1"
                     step="1"
-                    value={form.stock_quantity}
-                    onChange={(event) => setForm((current) => ({ ...current, stock_quantity: event.target.value }))}
+                    value={form.branch_id}
+                    onChange={(event) => setForm((current) => ({ ...current, branch_id: event.target.value }))}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="0"
+                    placeholder="1"
                   />
                 </div>
               </div>
@@ -350,7 +341,7 @@ export default function ProductsPage() {
                   disabled={submitting}
                   className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
                 >
-                  {submitting ? 'Saving...' : 'Save Product'}
+                  {submitting ? 'Saving...' : 'Save User'}
                 </button>
               </div>
             </form>

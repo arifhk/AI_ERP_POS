@@ -1,12 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import Link from 'next/link';
+import {
+  ThermalReceipt,
+  VAT_RATE,
+  formatPrice,
+  type Receipt,
+} from '../../components/ThermalReceipt';
 
 const API_BASE = 'http://localhost:8000';
-const VAT_RATE = 0.05;
-const COMPANY_NAME = 'Plus Point Pvt. Ltd.';
-const BRANCH_NAME = 'Joydebpur Branch';
 
 type Product = {
   id: number;
@@ -24,114 +27,6 @@ type CartItem = {
   quantity: number;
   stock_quantity: number;
 };
-
-type ReceiptLine = {
-  name: string;
-  quantity: number;
-  price: number;
-};
-
-type Receipt = {
-  orderId: number;
-  createdAt: string;
-  items: ReceiptLine[];
-  subtotal: number;
-  vat: number;
-  grandTotal: number;
-};
-
-function formatPrice(price: number) {
-  return `৳ ${price.toLocaleString('en-BD', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function formatReceiptDate(iso: string) {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) {
-    return iso;
-  }
-  return parsed.toLocaleString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function ThermalReceipt({ receipt }: { receipt: Receipt }) {
-  return (
-    <div
-      id="thermal-receipt"
-      className="w-full max-w-xs bg-white p-3 font-mono text-[11px] leading-tight text-black"
-    >
-      <div className="text-center">
-        <p className="text-sm font-bold uppercase tracking-wide">{COMPANY_NAME}</p>
-        <p className="mt-0.5">{BRANCH_NAME}</p>
-        <p className="mt-1 text-[10px] uppercase">Tax Invoice</p>
-      </div>
-
-      <div className="my-2 border-t border-dashed border-black" />
-
-      <div className="space-y-0.5">
-        <div className="flex justify-between gap-2">
-          <span>Date</span>
-          <span className="text-right">{formatReceiptDate(receipt.createdAt)}</span>
-        </div>
-        <div className="flex justify-between gap-2">
-          <span>Invoice</span>
-          <span>INV-{String(receipt.orderId).padStart(6, '0')}</span>
-        </div>
-        <div className="flex justify-between gap-2">
-          <span>Order ID</span>
-          <span>#{receipt.orderId}</span>
-        </div>
-      </div>
-
-      <div className="my-2 border-t border-dashed border-black" />
-
-      <div className="mb-1 flex justify-between font-bold uppercase">
-        <span>Item</span>
-        <span>Qty / Price</span>
-      </div>
-      <ul className="space-y-1.5">
-        {receipt.items.map((item, index) => (
-          <li key={`${item.name}-${index}`}>
-            <p className="uppercase">{item.name}</p>
-            <div className="flex justify-between">
-              <span>
-                {item.quantity} x {formatPrice(item.price)}
-              </span>
-              <span>{formatPrice(item.price * item.quantity)}</span>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      <div className="my-2 border-t border-dashed border-black" />
-
-      <div className="space-y-0.5">
-        <div className="flex justify-between">
-          <span>Subtotal</span>
-          <span>{formatPrice(receipt.subtotal)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>VAT (5%)</span>
-          <span>{formatPrice(receipt.vat)}</span>
-        </div>
-        <div className="mt-1 flex justify-between text-sm font-bold">
-          <span>Grand Total</span>
-          <span>{formatPrice(receipt.grandTotal)}</span>
-        </div>
-      </div>
-
-      <div className="my-2 border-t border-dashed border-black" />
-      <p className="text-center text-[10px]">Thank you for shopping with us</p>
-    </div>
-  );
-}
 
 export default function PosPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -248,7 +143,11 @@ export default function PosPage() {
     );
   }
 
-  function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
     event.preventDefault();
     const term = query.trim().toLowerCase();
     if (!term) {
@@ -258,16 +157,15 @@ export default function PosPage() {
     const exactBarcode = products.find(
       (product) => product.barcode.toLowerCase() === term,
     );
-    if (exactBarcode) {
-      addToCart(exactBarcode);
-      setQuery('');
+    const match =
+      exactBarcode ?? (filteredProducts.length === 1 ? filteredProducts[0] : undefined);
+
+    if (!match) {
       return;
     }
 
-    if (filteredProducts.length === 1) {
-      addToCart(filteredProducts[0]);
-      setQuery('');
-    }
+    addToCart(match);
+    setQuery('');
   }
 
   async function checkout() {
@@ -350,6 +248,7 @@ export default function PosPage() {
           <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Users</Link>
           <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Products</Link>
           <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">POS</Link>
+          <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Orders</Link>
           <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
         </nav>
       </aside>
@@ -378,12 +277,16 @@ export default function PosPage() {
               <p className="mt-1 text-sm text-gray-500">Scan a barcode or tap a product to build the order.</p>
             </div>
 
-            <form onSubmit={handleSearchSubmit} className="mb-4">
+            <form
+              onSubmit={(event) => event.preventDefault()}
+              className="mb-4"
+            >
               <input
                 autoFocus
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={handleSearchKeyDown}
                 placeholder="Search by barcode or product name..."
                 className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />

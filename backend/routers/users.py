@@ -28,20 +28,20 @@ def _hash_password(password: str) -> str:
 
 
 class UserCreate(SQLModel):
+    name: str
     email: str
-    full_name: str
-    password: str
-    role: UserRole = UserRole.CASHIER
-    tenant_id: Optional[int] = None
+    role: str = "Cashier"
     branch_id: Optional[int] = None
+    tenant_id: Optional[int] = 1
+    password: Optional[str] = None
     is_active: bool = True
 
 
 class UserUpdate(SQLModel):
+    name: Optional[str] = None
     email: Optional[str] = None
-    full_name: Optional[str] = None
     password: Optional[str] = None
-    role: Optional[UserRole] = None
+    role: Optional[str] = None
     tenant_id: Optional[int] = None
     branch_id: Optional[int] = None
     is_active: Optional[bool] = None
@@ -49,9 +49,9 @@ class UserUpdate(SQLModel):
 
 class UserRead(SQLModel):
     id: int
+    name: str
     email: str
-    full_name: str
-    role: UserRole
+    role: str
     tenant_id: Optional[int] = None
     branch_id: Optional[int] = None
     is_active: bool
@@ -69,9 +69,10 @@ async def _validate_scope(
     session: AsyncSession,
     tenant_id: Optional[int],
     branch_id: Optional[int],
-    role: UserRole,
+    role: str,
 ) -> None:
-    if role != UserRole.SUPER_ADMIN and tenant_id is None:
+    normalized_role = role.strip().lower().replace(" ", "_")
+    if normalized_role != UserRole.SUPER_ADMIN.value and tenant_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="tenant_id is required unless role is super_admin",
@@ -98,10 +99,10 @@ async def create_user(
 ) -> User:
     await _validate_scope(session, payload.tenant_id, payload.branch_id, payload.role)
     user = User(
-        email=payload.email,
-        full_name=payload.full_name,
-        hashed_password=_hash_password(payload.password),
-        role=payload.role,
+        email=payload.email.strip(),
+        name=payload.name.strip(),
+        hashed_password=_hash_password(payload.password or secrets.token_urlsafe(12)),
+        role=payload.role.strip() or "Cashier",
         tenant_id=payload.tenant_id,
         branch_id=payload.branch_id,
         is_active=payload.is_active,

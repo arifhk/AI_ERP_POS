@@ -69,9 +69,9 @@ class User(SQLModel, table=True):
     tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
     branch_id: Optional[int] = Field(default=None, foreign_key="branches.id", index=True)
     email: str = Field(unique=True, index=True, max_length=255)
-    full_name: str = Field(max_length=255)
+    name: str = Field(max_length=255)
     hashed_password: str = Field(max_length=255)
-    role: UserRole = Field(default=UserRole.CASHIER, index=True)
+    role: str = Field(default="Cashier", index=True, max_length=50)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utcnow)
 

@@ -50,10 +50,21 @@ def _align_products_schema(connection) -> None:
     connection.execute(text("DROP TABLE products"))
 
 
+def _align_users_schema(connection) -> None:
+    """Rename legacy full_name to name without dropping staff rows."""
+    inspector = inspect(connection)
+    if not inspector.has_table("users"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    if "full_name" in columns and "name" not in columns:
+        connection.execute(text("ALTER TABLE users RENAME COLUMN full_name TO name"))
+
+
 async def init_db() -> None:
     """Create tables from SQLModel metadata. Import models before calling."""
     async with engine.begin() as conn:
         await conn.run_sync(_align_products_schema)
+        await conn.run_sync(_align_users_schema)
         await conn.run_sync(SQLModel.metadata.create_all)
 
 

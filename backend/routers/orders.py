@@ -30,6 +30,7 @@ class OrderItemRead(SQLModel):
     product_id: int
     quantity: int
     price: float
+    name: str = ""
 
 
 class OrderRead(SQLModel):
@@ -39,6 +40,29 @@ class OrderRead(SQLModel):
     total_amount: float
     created_at: datetime
     items: list[OrderItemRead] = []
+
+
+_ORDER_LOAD = selectinload(Order.items).selectinload(OrderItem.product)
+
+
+def serialize_order(order: Order) -> OrderRead:
+    return OrderRead(
+        id=order.id or 0,
+        tenant_id=order.tenant_id,
+        branch_id=order.branch_id,
+        total_amount=order.total_amount,
+        created_at=order.created_at,
+        items=[
+            OrderItemRead(
+                id=item.id or 0,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                price=item.price,
+                name=item.product.name if item.product is not None else f"Product #{item.product_id}",
+            )
+            for item in order.items
+        ],
+    )
 
 
 async def _require_scope(session: AsyncSession, tenant_id: int, branch_id: int) -> None:
@@ -55,11 +79,21 @@ async def _require_scope(session: AsyncSession, tenant_id: int, branch_id: int) 
         )
 
 
+@router.get("/", response_model=list[OrderRead])
+async def list_orders(
+    session: AsyncSession = Depends(get_session),
+) -> list[OrderRead]:
+    result = await session.exec(
+        select(Order).options(_ORDER_LOAD).order_by(Order.created_at.desc())
+    )
+    return [serialize_order(order) for order in result.all()]
+
+
 @router.post("/", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
 async def create_order(
     payload: OrderCreate,
     session: AsyncSession = Depends(get_session),
-) -> Order:
+) -> OrderRead:
     if not payload.items:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -143,7 +177,7 @@ async def create_order(
 
     loaded = (
         await session.exec(
-            select(Order).where(Order.id == order.id).options(selectinload(Order.items))
+            select(Order).where(Order.id == order.id).options(_ORDER_LOAD)
         )
     ).one()
-    return loaded
+    return serialize_order(loaded)
