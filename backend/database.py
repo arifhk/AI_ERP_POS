@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -39,9 +39,21 @@ async_session_maker = async_sessionmaker(
 )
 
 
+def _align_products_schema(connection) -> None:
+    """Rebuild products if it still uses the pre-barcode catalog columns."""
+    inspector = inspect(connection)
+    if not inspector.has_table("products"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("products")}
+    if "price" in columns and "sku" not in columns:
+        return
+    connection.execute(text("DROP TABLE products"))
+
+
 async def init_db() -> None:
     """Create tables from SQLModel metadata. Import models before calling."""
     async with engine.begin() as conn:
+        await conn.run_sync(_align_products_schema)
         await conn.run_sync(SQLModel.metadata.create_all)
 
 

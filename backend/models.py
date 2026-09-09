@@ -78,20 +78,17 @@ class User(SQLModel, table=True):
 
 
 class Product(SQLModel, table=True):
-    """Catalog item owned by a tenant; optional branch for store-specific SKUs."""
+    """Catalog item owned by a tenant; optional branch for store-specific stock."""
 
     __tablename__ = "products"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     tenant_id: int = Field(foreign_key="tenants.id", index=True)
     branch_id: Optional[int] = Field(default=None, foreign_key="branches.id", index=True)
-    sku: str = Field(index=True, max_length=80)
-    barcode: Optional[str] = Field(default=None, index=True, max_length=80)
     name: str = Field(max_length=255)
-    description: Optional[str] = Field(default=None)
-    unit_price: float = Field(default=0.0, ge=0)
-    cost_price: float = Field(default=0.0, ge=0)
-    stock_quantity: float = Field(default=0.0)
+    barcode: str = Field(unique=True, index=True, max_length=80)
+    price: float = Field(ge=0)
+    stock_quantity: int = Field(default=0, ge=0)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utcnow)
 

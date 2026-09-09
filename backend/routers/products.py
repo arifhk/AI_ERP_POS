@@ -14,27 +14,21 @@ router = APIRouter()
 
 class ProductCreate(SQLModel):
     tenant_id: int
-    sku: str
     name: str
+    barcode: str
+    price: float
     branch_id: Optional[int] = None
-    barcode: Optional[str] = None
-    description: Optional[str] = None
-    unit_price: float = 0.0
-    cost_price: float = 0.0
-    stock_quantity: float = 0.0
+    stock_quantity: int = 0
     is_active: bool = True
 
 
 class ProductUpdate(SQLModel):
     tenant_id: Optional[int] = None
-    sku: Optional[str] = None
     name: Optional[str] = None
-    branch_id: Optional[int] = None
     barcode: Optional[str] = None
-    description: Optional[str] = None
-    unit_price: Optional[float] = None
-    cost_price: Optional[float] = None
-    stock_quantity: Optional[float] = None
+    price: Optional[float] = None
+    branch_id: Optional[int] = None
+    stock_quantity: Optional[int] = None
     is_active: Optional[bool] = None
 
 
@@ -42,13 +36,10 @@ class ProductRead(SQLModel):
     id: int
     tenant_id: int
     branch_id: Optional[int] = None
-    sku: str
-    barcode: Optional[str] = None
     name: str
-    description: Optional[str] = None
-    unit_price: float
-    cost_price: float
-    stock_quantity: float
+    barcode: str
+    price: float
+    stock_quantity: int
     is_active: bool
     created_at: datetime
 
@@ -79,13 +70,12 @@ async def _validate_catalog_scope(
             )
 
 
-async def _sku_taken(
+async def _barcode_taken(
     session: AsyncSession,
-    tenant_id: int,
-    sku: str,
+    barcode: str,
     exclude_id: Optional[int] = None,
 ) -> bool:
-    statement = select(Product).where(Product.tenant_id == tenant_id, Product.sku == sku)
+    statement = select(Product).where(Product.barcode == barcode)
     if exclude_id is not None:
         statement = statement.where(Product.id != exclude_id)
     existing = (await session.exec(statement)).first()
@@ -98,10 +88,10 @@ async def create_product(
     session: AsyncSession = Depends(get_session),
 ) -> Product:
     await _validate_catalog_scope(session, payload.tenant_id, payload.branch_id)
-    if await _sku_taken(session, payload.tenant_id, payload.sku):
+    if await _barcode_taken(session, payload.barcode):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="SKU already exists for this tenant",
+            detail="Barcode already exists",
         )
     product = Product.model_validate(payload)
     session.add(product)
@@ -152,12 +142,12 @@ async def update_product(
     data = payload.model_dump(exclude_unset=True)
     next_tenant_id = data.get("tenant_id", product.tenant_id)
     next_branch_id = data.get("branch_id", product.branch_id)
-    next_sku = data.get("sku", product.sku)
+    next_barcode = data.get("barcode", product.barcode)
     await _validate_catalog_scope(session, next_tenant_id, next_branch_id)
-    if await _sku_taken(session, next_tenant_id, next_sku, exclude_id=product.id):
+    if await _barcode_taken(session, next_barcode, exclude_id=product.id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="SKU already exists for this tenant",
+            detail="Barcode already exists",
         )
     product.sqlmodel_update(data)
     session.add(product)
