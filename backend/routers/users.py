@@ -1,4 +1,3 @@
-import hashlib
 import secrets
 from datetime import datetime
 from typing import Optional
@@ -8,23 +7,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from auth import hash_password
 from database import get_session
 from models import Branch, Tenant, User, UserRole
 
 router = APIRouter()
-
-_HASH_ITERS = 120_000
-
-
-def _hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    derived = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt.encode("utf-8"),
-        _HASH_ITERS,
-    )
-    return f"pbkdf2_sha256${_HASH_ITERS}${salt}${derived.hex()}"
 
 
 class UserCreate(SQLModel):
@@ -101,7 +88,7 @@ async def create_user(
     user = User(
         email=payload.email.strip(),
         name=payload.name.strip(),
-        hashed_password=_hash_password(payload.password or secrets.token_urlsafe(12)),
+        hashed_password=hash_password(payload.password or secrets.token_urlsafe(12)),
         role=payload.role.strip() or "Cashier",
         tenant_id=payload.tenant_id,
         branch_id=payload.branch_id,
@@ -160,7 +147,7 @@ async def update_user(
     await _validate_scope(session, next_tenant_id, next_branch_id, next_role)
     user.sqlmodel_update(data)
     if password is not None:
-        user.hashed_password = _hash_password(password)
+        user.hashed_password = hash_password(password)
     session.add(user)
     try:
         await session.commit()

@@ -58,6 +58,9 @@ def _align_users_schema(connection) -> None:
     columns = {column["name"] for column in inspector.get_columns("users")}
     if "full_name" in columns and "name" not in columns:
         connection.execute(text("ALTER TABLE users RENAME COLUMN full_name TO name"))
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    if "hashed_password" not in columns:
+        connection.execute(text("ALTER TABLE users ADD COLUMN hashed_password VARCHAR(255)"))
 
 
 async def init_db() -> None:
