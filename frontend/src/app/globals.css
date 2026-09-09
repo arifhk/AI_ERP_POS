@@ -24,3 +24,30 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 4mm;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  #thermal-receipt,
+  #thermal-receipt * {
+    visibility: visible !important;
+  }
+
+  #thermal-receipt {
+    position: absolute !important;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    max-width: 80mm;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+}

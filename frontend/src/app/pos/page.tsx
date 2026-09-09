@@ -5,6 +5,8 @@ import Link from 'next/link';
 
 const API_BASE = 'http://localhost:8000';
 const VAT_RATE = 0.05;
+const COMPANY_NAME = 'Plus Point Pvt. Ltd.';
+const BRANCH_NAME = 'Joydebpur Branch';
 
 type Product = {
   id: number;
@@ -23,11 +25,112 @@ type CartItem = {
   stock_quantity: number;
 };
 
+type ReceiptLine = {
+  name: string;
+  quantity: number;
+  price: number;
+};
+
+type Receipt = {
+  orderId: number;
+  createdAt: string;
+  items: ReceiptLine[];
+  subtotal: number;
+  vat: number;
+  grandTotal: number;
+};
+
 function formatPrice(price: number) {
   return `৳ ${price.toLocaleString('en-BD', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+function formatReceiptDate(iso: string) {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) {
+    return iso;
+  }
+  return parsed.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function ThermalReceipt({ receipt }: { receipt: Receipt }) {
+  return (
+    <div
+      id="thermal-receipt"
+      className="w-full max-w-xs bg-white p-3 font-mono text-[11px] leading-tight text-black"
+    >
+      <div className="text-center">
+        <p className="text-sm font-bold uppercase tracking-wide">{COMPANY_NAME}</p>
+        <p className="mt-0.5">{BRANCH_NAME}</p>
+        <p className="mt-1 text-[10px] uppercase">Tax Invoice</p>
+      </div>
+
+      <div className="my-2 border-t border-dashed border-black" />
+
+      <div className="space-y-0.5">
+        <div className="flex justify-between gap-2">
+          <span>Date</span>
+          <span className="text-right">{formatReceiptDate(receipt.createdAt)}</span>
+        </div>
+        <div className="flex justify-between gap-2">
+          <span>Invoice</span>
+          <span>INV-{String(receipt.orderId).padStart(6, '0')}</span>
+        </div>
+        <div className="flex justify-between gap-2">
+          <span>Order ID</span>
+          <span>#{receipt.orderId}</span>
+        </div>
+      </div>
+
+      <div className="my-2 border-t border-dashed border-black" />
+
+      <div className="mb-1 flex justify-between font-bold uppercase">
+        <span>Item</span>
+        <span>Qty / Price</span>
+      </div>
+      <ul className="space-y-1.5">
+        {receipt.items.map((item, index) => (
+          <li key={`${item.name}-${index}`}>
+            <p className="uppercase">{item.name}</p>
+            <div className="flex justify-between">
+              <span>
+                {item.quantity} x {formatPrice(item.price)}
+              </span>
+              <span>{formatPrice(item.price * item.quantity)}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <div className="my-2 border-t border-dashed border-black" />
+
+      <div className="space-y-0.5">
+        <div className="flex justify-between">
+          <span>Subtotal</span>
+          <span>{formatPrice(receipt.subtotal)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>VAT (5%)</span>
+          <span>{formatPrice(receipt.vat)}</span>
+        </div>
+        <div className="mt-1 flex justify-between text-sm font-bold">
+          <span>Grand Total</span>
+          <span>{formatPrice(receipt.grandTotal)}</span>
+        </div>
+      </div>
+
+      <div className="my-2 border-t border-dashed border-black" />
+      <p className="text-center text-[10px]">Thank you for shopping with us</p>
+    </div>
+  );
 }
 
 export default function PosPage() {
@@ -38,6 +141,7 @@ export default function PosPage() {
   const [checkingOut, setCheckingOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
 
   async function loadProducts() {
     const response = await fetch(`${API_BASE}/products/`);
@@ -202,9 +306,21 @@ export default function PosPage() {
         throw new Error(message);
       }
 
+      const order = (await response.json()) as { id?: number; created_at?: string };
+      setReceipt({
+        orderId: typeof order.id === 'number' ? order.id : 0,
+        createdAt: typeof order.created_at === 'string' ? order.created_at : new Date().toISOString(),
+        items: cart.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+        })),
+        subtotal,
+        vat,
+        grandTotal,
+      });
       setCart([]);
       await loadProducts();
-      window.alert('Order placed successfully!');
     } catch (caught) {
       const message =
         caught instanceof Error ? caught.message : 'Could not place the order.';
@@ -214,8 +330,15 @@ export default function PosPage() {
     }
   }
 
+  function startNewOrder() {
+    setReceipt(null);
+    setCart([]);
+    setNotice(null);
+  }
+
   return (
-    <div className="flex h-screen bg-gray-100">
+    <>
+    <div className="flex h-screen bg-gray-100 print:hidden">
       <aside className="w-64 bg-gray-900 text-white flex flex-col">
         <div className="p-6 text-2xl font-bold border-b border-gray-800">
           AI ERP & POS
@@ -405,5 +528,38 @@ export default function PosPage() {
         </main>
       </div>
     </div>
+
+    {receipt && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 print:static print:bg-transparent print:p-0"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="receipt-title"
+      >
+        <div className="flex flex-col items-center">
+          <p id="receipt-title" className="sr-only">
+            Order receipt
+          </p>
+          <ThermalReceipt receipt={receipt} />
+          <div className="mt-4 flex w-full max-w-xs gap-2 print:hidden">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="flex-1 rounded-md border border-gray-800 bg-white px-3 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50"
+            >
+              Print Receipt
+            </button>
+            <button
+              type="button"
+              onClick={startNewOrder}
+              className="flex-1 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+            >
+              New Order
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
