@@ -37,6 +37,7 @@ class Tenant(SQLModel, table=True):
     branches: list["Branch"] = Relationship(back_populates="tenant")
     users: list["User"] = Relationship(back_populates="tenant")
     products: list["Product"] = Relationship(back_populates="tenant")
+    orders: list["Order"] = Relationship(back_populates="tenant")
 
 
 class Branch(SQLModel, table=True):
@@ -56,6 +57,7 @@ class Branch(SQLModel, table=True):
     tenant: Tenant = Relationship(back_populates="branches")
     users: list["User"] = Relationship(back_populates="branch")
     products: list["Product"] = Relationship(back_populates="branch")
+    orders: list["Order"] = Relationship(back_populates="branch")
 
 
 class User(SQLModel, table=True):
@@ -94,3 +96,35 @@ class Product(SQLModel, table=True):
 
     tenant: Tenant = Relationship(back_populates="products")
     branch: Optional[Branch] = Relationship(back_populates="products")
+    order_items: list["OrderItem"] = Relationship(back_populates="product")
+
+
+class Order(SQLModel, table=True):
+    """POS sale header scoped to a tenant branch."""
+
+    __tablename__ = "orders"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int = Field(foreign_key="tenants.id", index=True)
+    branch_id: int = Field(foreign_key="branches.id", index=True)
+    total_amount: float = Field(ge=0)
+    created_at: datetime = Field(default_factory=utcnow)
+
+    tenant: Tenant = Relationship(back_populates="orders")
+    branch: Branch = Relationship(back_populates="orders")
+    items: list["OrderItem"] = Relationship(back_populates="order")
+
+
+class OrderItem(SQLModel, table=True):
+    """Line item on a POS order, with unit price at time of sale."""
+
+    __tablename__ = "order_items"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    order_id: int = Field(foreign_key="orders.id", index=True)
+    product_id: int = Field(foreign_key="products.id", index=True)
+    quantity: int = Field(ge=1)
+    price: float = Field(ge=0)
+
+    order: Order = Relationship(back_populates="items")
+    product: Product = Relationship(back_populates="order_items")

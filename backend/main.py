@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 from database import init_db
 import models  # noqa: F401  — register tables on SQLModel.metadata
-from routers import branches, products, tenants, users
+from routers import branches, orders, products, tenants, users
 
 
 @asynccontextmanager
@@ -38,6 +38,8 @@ app.include_router(tenants.router, prefix="/tenants", tags=["Tenants"])
 app.include_router(branches.router, prefix="/branches", tags=["Branches"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(products.router, prefix="/products", tags=["Products"])
+app.include_router(orders.router, prefix="/orders", tags=["Orders"])  # POS checkout
+
 
 
 @app.get("/health")
