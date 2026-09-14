@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "react-barcode": "^1.6.1",
     "recharts": "^3.10.1"
   }
 }

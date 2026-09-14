@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { Sidebar } from '../../components/Sidebar';
+import { LabelPrinter } from '../../components/LabelPrinter';
 import { API_BASE, apiFetch } from '../../utils/api';
 
 type Product = {
@@ -54,6 +55,7 @@ export default function ProductsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [barcodeProduct, setBarcodeProduct] = useState<Product | null>(null);
 
   async function loadProducts() {
     const response = await apiFetch(`${API_BASE}/products/`);
@@ -212,12 +214,13 @@ export default function ProductsPage() {
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Price</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Stock</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
+                        <th scope="col" className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
                       {products.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
+                          <td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-500">
                             No products found. Add a product to get started.
                           </td>
                         </tr>
@@ -246,6 +249,17 @@ export default function ProductsPage() {
                               >
                                 {product.is_active ? 'Active' : 'Inactive'}
                               </span>
+                            </td>
+                            <td className="whitespace-nowrap px-6 py-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setBarcodeProduct(product)}
+                                className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                                title="Print Barcode"
+                              >
+                                <span aria-hidden="true">🏷️</span>
+                                Print Barcode
+                              </button>
                             </td>
                           </tr>
                         ))
@@ -361,6 +375,10 @@ export default function ProductsPage() {
           </div>
         </div>
       )}
+
+      {barcodeProduct ? (
+        <LabelPrinter product={barcodeProduct} onClose={() => setBarcodeProduct(null)} />
+      ) : null}
     </div>
   );
 }

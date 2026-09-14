@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ThermalReceipt,
   VAT_RATE,
@@ -9,6 +10,7 @@ import {
 } from '../../components/ThermalReceipt';
 import { Sidebar } from '../../components/Sidebar';
 import { API_BASE, apiFetch } from '../../utils/api';
+import { printWithMode } from '../../utils/print';
 
 type Product = {
   id: number;
@@ -457,37 +459,47 @@ export default function PosPage() {
       </div>
     </div>
 
-    {receipt && (
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 print:static print:bg-transparent print:p-0"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="receipt-title"
-      >
-        <div className="flex flex-col items-center">
-          <p id="receipt-title" className="sr-only">
-            Order receipt
-          </p>
-          <ThermalReceipt receipt={receipt} />
-          <div className="mt-4 flex w-full max-w-xs gap-2 print:hidden">
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="flex-1 rounded-md border border-gray-800 bg-white px-3 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50"
-            >
-              Print Receipt
-            </button>
-            <button
-              type="button"
-              onClick={startNewOrder}
-              className="flex-1 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-            >
-              New Order
-            </button>
+    {receipt ? (
+      <>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 print:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="receipt-title"
+        >
+          <div className="flex max-h-[90vh] flex-col items-center overflow-y-auto rounded-xl bg-neutral-100 p-5 shadow-2xl">
+            <h2 id="receipt-title" className="mb-3 text-sm font-semibold text-gray-800">
+              Sale complete
+            </h2>
+            <div className="rounded-sm border border-neutral-300 bg-white shadow-sm">
+              <ThermalReceipt receipt={receipt} />
+            </div>
+            <div className="mt-4 flex w-[80mm] max-w-[80mm] gap-2">
+              <button
+                type="button"
+                onClick={() => printWithMode('receipt')}
+                className="flex-1 rounded-md border border-gray-800 bg-white px-3 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50"
+              >
+                Print Receipt
+              </button>
+              <button
+                type="button"
+                onClick={startNewOrder}
+                className="flex-1 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+              >
+                New Order
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    )}
+        {createPortal(
+          <div id="thermal-receipt-host" className="hidden print:block">
+            <ThermalReceipt receipt={receipt} printRoot />
+          </div>,
+          document.body,
+        )}
+      </>
+    ) : null}
     </>
   );
 }

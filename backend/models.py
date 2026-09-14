@@ -11,6 +11,29 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def parse_iso_datetime(value: Optional[str], *, is_end: bool = False) -> Optional[datetime]:
+    """Parse an optional ISO-8601 query value into a UTC-naive datetime."""
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError("Invalid date format. Use ISO 8601.") from exc
+
+    if parsed.tzinfo is None:
+        if "T" not in raw and " " not in raw:
+            if is_end:
+                parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 class UserRole(str, Enum):
     """Platform and tenant roles for RBAC."""
 
@@ -71,8 +94,8 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True, max_length=255)
     name: str = Field(max_length=255)
     hashed_password: Optional[str] = Field(default=None, max_length=255)
-    role: str = Field(default="Cashier", index=True, max_length=50)
-    is_active: bool = Field(default=True)
+    role: str = Field(default="Pending", index=True, max_length=50)
+    is_active: bool = Field(default=False)
     created_at: datetime = Field(default_factory=utcnow)
 
     tenant: Optional[Tenant] = Relationship(back_populates="users")
@@ -97,6 +120,7 @@ class Product(SQLModel, table=True):
     tenant: Tenant = Relationship(back_populates="products")
     branch: Optional[Branch] = Relationship(back_populates="products")
     order_items: list["OrderItem"] = Relationship(back_populates="product")
+    purchases: list["Purchase"] = Relationship(back_populates="product")
 
 
 class Order(SQLModel, table=True):
@@ -129,3 +153,75 @@ class OrderItem(SQLModel, table=True):
 
     order: Order = Relationship(back_populates="items")
     product: Product = Relationship(back_populates="order_items")
+
+
+class Expense(SQLModel, table=True):
+    """Petty cash spend logged against a tenant branch."""
+
+    __tablename__ = "expenses"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    description: str = Field(max_length=500)
+    amount: float = Field(ge=0)
+    date: datetime = Field(default_factory=utcnow, index=True)
+    tenant_id: int = Field(foreign_key="tenants.id", index=True)
+    branch_id: int = Field(foreign_key="branches.id", index=True)
+    created_by: str = Field(max_length=255, index=True)
+
+
+class ExpenseCreate(SQLModel):
+    description: str
+    amount: float
+    tenant_id: Optional[int] = None
+    branch_id: Optional[int] = None
+
+
+class ExpenseRead(SQLModel):
+    id: int
+    description: str
+    amount: float
+    date: datetime
+    tenant_id: int
+    branch_id: int
+    created_by: str
+
+
+class Purchase(SQLModel, table=True):
+    """Stock receipt that increases on-hand inventory."""
+
+    __tablename__ = "purchases"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    product_id: int = Field(foreign_key="products.id", index=True)
+    supplier_name: str = Field(max_length=255)
+    quantity_added: int = Field(ge=1)
+    cost_price: float = Field(ge=0)
+    date: datetime = Field(default_factory=utcnow, index=True)
+    tenant_id: int = Field(foreign_key="tenants.id", index=True)
+    branch_id: int = Field(foreign_key="branches.id", index=True)
+    created_by: str = Field(max_length=255, index=True)
+
+    product: Optional[Product] = Relationship(back_populates="purchases")
+
+
+class PurchaseCreate(SQLModel):
+    product_id: int
+    supplier_name: str
+    quantity_added: int
+    cost_price: float
+    tenant_id: Optional[int] = None
+    branch_id: Optional[int] = None
+
+
+class PurchaseRead(SQLModel):
+    id: int
+    product_id: int
+    product_name: str = ""
+    supplier_name: str
+    quantity_added: int
+    cost_price: float
+    date: datetime
+    tenant_id: int
+    branch_id: int
+    created_by: str
+

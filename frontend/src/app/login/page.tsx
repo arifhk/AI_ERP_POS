@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 const API_BASE = 'http://localhost:8000';
@@ -34,6 +35,18 @@ export default function LoginPage() {
       });
 
       if (!response.ok) {
+        if (response.status === 403) {
+          let message = 'Account pending admin approval';
+          try {
+            const payload = (await response.json()) as { detail?: unknown };
+            if (typeof payload.detail === 'string' && payload.detail.trim()) {
+              message = payload.detail;
+            }
+          } catch {
+            // Keep the pending-approval message if the body is not JSON.
+          }
+          throw new Error(message);
+        }
         throw new Error(
           response.status === 401
             ? 'Incorrect email or password'
@@ -133,6 +146,13 @@ export default function LoginPage() {
               {error}
             </p>
           ) : null}
+
+          <p className="mt-6 text-center text-sm text-slate-500">
+            Need access?{' '}
+            <Link href="/register" className="font-semibold text-indigo-600 hover:text-indigo-500">
+              Create an account
+            </Link>
+          </p>
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-400">

@@ -10,12 +10,15 @@ const NAV_LINKS = [
   { href: '/branches', label: 'Branches', key: 'branches' },
   { href: '/users', label: 'Users', key: 'users' },
   { href: '/products', label: 'Products', key: 'products' },
+  { href: '/purchases', label: 'Purchases', key: 'purchases' },
   { href: '/pos', label: 'POS', key: 'pos' },
   { href: '/orders', label: 'Orders', key: 'orders' },
+  { href: '/expenses', label: 'Expenses', key: 'expenses' },
+  { href: '/customers', label: 'Customers', key: 'customers' },
   { href: '/settings', label: 'Settings', key: 'settings' },
 ] as const;
 
-const CASHIER_KEYS = new Set(['pos', 'orders']);
+const CASHIER_KEYS = new Set(['pos', 'orders', 'expenses', 'purchases']);
 
 type SidebarProps = {
   active: (typeof NAV_LINKS)[number]['key'];

@@ -20,6 +20,60 @@ type ChartPoint = {
   total: number;
 };
 
+type DateFilter = 'today' | 'week' | 'all';
+
+const DATE_FILTERS: { id: DateFilter; label: string }[] = [
+  { id: 'today', label: 'Today' },
+  { id: 'week', label: 'This Week' },
+  { id: 'all', label: 'All Time' },
+];
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function endOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}
+
+function getDateRange(filter: DateFilter): { start_date: string; end_date: string } | null {
+  if (filter === 'all') {
+    return null;
+  }
+
+  const now = new Date();
+  const end = endOfLocalDay(now);
+
+  if (filter === 'today') {
+    return {
+      start_date: startOfLocalDay(now).toISOString(),
+      end_date: end.toISOString(),
+    };
+  }
+
+  const weekday = now.getDay();
+  const daysFromMonday = weekday === 0 ? 6 : weekday - 1;
+  const monday = startOfLocalDay(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysFromMonday),
+  );
+
+  return {
+    start_date: monday.toISOString(),
+    end_date: end.toISOString(),
+  };
+}
+
+function withDateQuery(url: string, range: { start_date: string; end_date: string } | null) {
+  if (!range) {
+    return url;
+  }
+  const params = new URLSearchParams({
+    start_date: range.start_date,
+    end_date: range.end_date,
+  });
+  return `${url}?${params.toString()}`;
+}
+
 function formatCurrency(amount: number) {
   return `৳ ${amount.toLocaleString('en-BD', {
     minimumFractionDigits: 2,
@@ -35,28 +89,75 @@ function formatChartDate(value: string) {
   return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
-function parseChartData(payload: unknown): ChartPoint[] {
+function sumExpenseAmounts(payload: unknown): number {
+  if (!Array.isArray(payload)) {
+    return 0;
+  }
+  return payload.reduce((total, row) => {
+    if (!row || typeof row !== 'object' || !('amount' in row) || typeof row.amount !== 'number') {
+      return total;
+    }
+    return total + row.amount;
+  }, 0);
+}
+
+function sumOrderTotals(payload: unknown): number {
+  if (!Array.isArray(payload)) {
+    return 0;
+  }
+  return payload.reduce((total, row) => {
+    if (
+      !row ||
+      typeof row !== 'object' ||
+      !('total_amount' in row) ||
+      typeof row.total_amount !== 'number'
+    ) {
+      return total;
+    }
+    return total + row.total_amount;
+  }, 0);
+}
+
+function chartFromOrders(payload: unknown): ChartPoint[] {
   if (!Array.isArray(payload)) {
     return [];
   }
-  return payload
-    .map((row) => {
-      if (!row || typeof row !== 'object') {
-        return null;
-      }
-      const date = 'date' in row && typeof row.date === 'string' ? row.date : null;
-      const total = 'total' in row && typeof row.total === 'number' ? row.total : 0;
-      return date ? { date, total } : null;
-    })
-    .filter((row): row is ChartPoint => row !== null);
+
+  const buckets = new Map<string, number>();
+  for (const row of payload) {
+    if (!row || typeof row !== 'object') {
+      continue;
+    }
+    const createdAt =
+      'created_at' in row && typeof row.created_at === 'string' ? row.created_at : null;
+    const amount =
+      'total_amount' in row && typeof row.total_amount === 'number' ? row.total_amount : 0;
+    if (!createdAt) {
+      continue;
+    }
+    const parsed = new Date(createdAt);
+    if (Number.isNaN(parsed.getTime())) {
+      continue;
+    }
+    const key = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(
+      parsed.getDate(),
+    ).padStart(2, '0')}`;
+    buckets.set(key, (buckets.get(key) ?? 0) + amount);
+  }
+
+  return [...buckets.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, total]) => ({ date, total }));
 }
 
 export default function Dashboard() {
   const router = useRouter();
   const [totalSales, setTotalSales] = useState(0);
+  const [totalExpenses, setTotalExpenses] = useState(0);
   const [activeBranches, setActiveBranches] = useState(0);
   const [newUsers, setNewUsers] = useState(0);
   const [chartData, setChartData] = useState<ChartPoint[]>([]);
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,31 +169,34 @@ export default function Dashboard() {
     }
 
     let cancelled = false;
+    const range = getDateRange(dateFilter);
 
     async function loadDashboard() {
       try {
-        const [branchesRes, usersRes, statsRes, chartRes] = await Promise.all([
+        const [branchesRes, usersRes, statsRes, ordersRes, expensesRes] = await Promise.all([
           apiFetch(`${API_BASE}/branches/`),
           apiFetch(`${API_BASE}/users/`),
           apiFetch(`${API_BASE}/dashboard-stats/`),
-          apiFetch(`${API_BASE}/chart-data/`),
+          apiFetch(withDateQuery(`${API_BASE}/orders/`, range)),
+          apiFetch(withDateQuery(`${API_BASE}/expenses/`, range)),
         ]);
 
-        if (!branchesRes.ok || !usersRes.ok || !statsRes.ok || !chartRes.ok) {
+        if (
+          !branchesRes.ok ||
+          !usersRes.ok ||
+          !statsRes.ok ||
+          !ordersRes.ok ||
+          !expensesRes.ok
+        ) {
           throw new Error('Failed to load dashboard data');
         }
 
         const branches: unknown = await branchesRes.json();
         const users: unknown = await usersRes.json();
         const stats: unknown = await statsRes.json();
-        const chart: unknown = await chartRes.json();
-        const sales =
-          stats &&
-          typeof stats === 'object' &&
-          'total_sales' in stats &&
-          typeof stats.total_sales === 'number'
-            ? stats.total_sales
-            : 0;
+        const orders: unknown = await ordersRes.json();
+        const expenses: unknown = await expensesRes.json();
+        const sales = sumOrderTotals(orders);
         const userCount =
           stats &&
           typeof stats === 'object' &&
@@ -105,9 +209,11 @@ export default function Dashboard() {
 
         if (!cancelled) {
           setTotalSales(sales);
+          setTotalExpenses(sumExpenseAmounts(expenses));
           setActiveBranches(Array.isArray(branches) ? branches.length : 0);
           setNewUsers(userCount);
-          setChartData(parseChartData(chart));
+          setChartData(chartFromOrders(orders));
+          setError(null);
         }
       } catch {
         if (!cancelled) {
@@ -124,7 +230,9 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, dateFilter]);
+
+  const cashInHand = totalSales - totalExpenses;
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -153,7 +261,32 @@ export default function Dashboard() {
 
         {/* Dashboard Content */}
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
-          <h1 className="text-3xl font-semibold text-gray-800 mb-6">Dashboard Overview</h1>
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <h1 className="text-3xl font-semibold text-gray-800">Dashboard Overview</h1>
+            <div
+              className="inline-flex rounded-lg bg-white p-1 shadow-sm ring-1 ring-gray-200"
+              role="group"
+              aria-label="Date filter"
+            >
+              {DATE_FILTERS.map((option) => {
+                const active = dateFilter === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setDateFilter(option.id)}
+                    className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+                      active
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {loading ? (
             <div className="flex items-center justify-center rounded-lg border border-gray-100 bg-white p-16 shadow-sm">
@@ -171,37 +304,65 @@ export default function Dashboard() {
               )}
 
               {/* Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                {/* Card 1 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-100">
-                  <div className="flex items-center justify-between">
-                    <div>
+              <div className="mb-8 grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-lg border border-gray-100 bg-white p-6 shadow-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-500">Total Sales</p>
-                      <p className="text-3xl font-bold text-gray-900">{formatCurrency(totalSales)}</p>
+                      <p className="mt-1 truncate text-2xl font-bold text-gray-900 xl:text-3xl">
+                        {formatCurrency(totalSales)}
+                      </p>
                     </div>
-                    <div className="p-3 bg-green-100 rounded-full text-green-600 text-2xl">💰</div>
+                    <div className="shrink-0 rounded-full bg-green-100 p-3 text-2xl text-green-600">💰</div>
                   </div>
                 </div>
 
-                {/* Card 2 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-100">
-                  <div className="flex items-center justify-between">
-                    <div>
+                <div className="rounded-lg border border-rose-100 bg-white p-6 shadow-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-rose-500">Total Expenses</p>
+                      <p className="mt-1 truncate text-2xl font-bold text-rose-700 xl:text-3xl">
+                        {formatCurrency(totalExpenses)}
+                      </p>
+                    </div>
+                    <div className="shrink-0 rounded-full bg-rose-100 p-3 text-2xl text-rose-600">📉</div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 shadow-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-emerald-700">Cash in Hand</p>
+                      <p
+                        className={`mt-1 truncate text-2xl font-extrabold xl:text-3xl ${
+                          cashInHand >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                        }`}
+                      >
+                        {formatCurrency(cashInHand)}
+                      </p>
+                      <p className="mt-1 text-xs text-emerald-600/80">Net balance (sales − expenses)</p>
+                    </div>
+                    <div className="shrink-0 rounded-full bg-emerald-100 p-3 text-2xl text-emerald-700">💵</div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-100 bg-white p-6 shadow-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-500">Active Branches</p>
-                      <p className="text-3xl font-bold text-gray-900">{activeBranches}</p>
+                      <p className="mt-1 text-2xl font-bold text-gray-900 xl:text-3xl">{activeBranches}</p>
                     </div>
-                    <div className="p-3 bg-blue-100 rounded-full text-blue-600 text-2xl">🏢</div>
+                    <div className="shrink-0 rounded-full bg-blue-100 p-3 text-2xl text-blue-600">🏢</div>
                   </div>
                 </div>
 
-                {/* Card 3 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-100">
-                  <div className="flex items-center justify-between">
-                    <div>
+                <div className="rounded-lg border border-gray-100 bg-white p-6 shadow-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-500">New Users</p>
-                      <p className="text-3xl font-bold text-gray-900">{newUsers}</p>
+                      <p className="mt-1 text-2xl font-bold text-gray-900 xl:text-3xl">{newUsers}</p>
                     </div>
-                    <div className="p-3 bg-purple-100 rounded-full text-purple-600 text-2xl">👥</div>
+                    <div className="shrink-0 rounded-full bg-purple-100 p-3 text-2xl text-purple-600">👥</div>
                   </div>
                 </div>
               </div>
@@ -210,7 +371,14 @@ export default function Dashboard() {
                 <div className="mb-6 flex items-end justify-between gap-4">
                   <div>
                     <h2 className="text-xl font-bold text-gray-800">Sales trend</h2>
-                    <p className="mt-1 text-sm text-gray-500">Daily order totals across all branches</p>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Daily order totals
+                      {dateFilter === 'today'
+                        ? ' for today'
+                        : dateFilter === 'week'
+                          ? ' for this week'
+                          : ' across all branches'}
+                    </p>
                   </div>
                   <p className="text-sm font-medium text-indigo-600">
                     {chartData.length === 1 ? '1 day' : `${chartData.length} days`}

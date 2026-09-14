@@ -29,9 +29,15 @@ export default function UsersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [activeTab, setActiveTab] = useState<'staff' | 'pending'>('staff');
+  const [approveUser, setApproveUser] = useState<User | null>(null);
+  const [approveRole, setApproveRole] = useState<(typeof ROLE_OPTIONS)[number]>('Cashier');
+  const [approveBranchId, setApproveBranchId] = useState('1');
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
 
   async function loadUsers() {
-    const response = await apiFetch(`${API_BASE}/users/`);
+    const response = await apiFetch(`${API_BASE}/users/?limit=200`);
     if (!response.ok) {
       throw new Error('Failed to load users');
     }
@@ -76,6 +82,63 @@ export default function UsersPage() {
     setModalOpen(false);
     setFormError(null);
     setForm(emptyForm);
+  }
+
+  function openApproveModal(user: User) {
+    setApproveUser(user);
+    setApproveRole('Cashier');
+    setApproveBranchId(user.branch_id ? String(user.branch_id) : '1');
+    setApproveError(null);
+  }
+
+  function closeApproveModal() {
+    if (approving) {
+      return;
+    }
+    setApproveUser(null);
+    setApproveError(null);
+  }
+
+  async function handleApprove(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!approveUser) {
+      return;
+    }
+
+    setApproving(true);
+    setApproveError(null);
+
+    try {
+      const response = await apiFetch(`${API_BASE}/users/${approveUser.id}/approve`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: approveRole,
+          branch_id: Number(approveBranchId),
+          is_active: true,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = 'Could not approve the user.';
+        try {
+          const payload = (await response.json()) as { detail?: unknown };
+          if (typeof payload.detail === 'string') {
+            message = payload.detail;
+          }
+        } catch {
+          // Keep the generic message if the error body is not JSON.
+        }
+        throw new Error(message);
+      }
+
+      setApproveUser(null);
+      await loadUsers();
+    } catch (caught) {
+      setApproveError(caught instanceof Error ? caught.message : 'Could not approve the user.');
+    } finally {
+      setApproving(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -172,56 +235,131 @@ export default function UsersPage() {
                 </div>
               )}
 
+              <div className="mb-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('staff')}
+                  className={`rounded-md px-4 py-2 text-sm font-semibold ${
+                    activeTab === 'staff'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  Staff
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pending')}
+                  className={`rounded-md px-4 py-2 text-sm font-semibold ${
+                    activeTab === 'pending'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  Pending Approvals
+                  {users.filter((user) => !user.is_active).length > 0 ? (
+                    <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
+                      {users.filter((user) => !user.is_active).length}
+                    </span>
+                  ) : null}
+                </button>
+              </div>
+
               <div className="overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Name</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Email</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Role</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Branch ID</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {users.length === 0 ? (
+                  {activeTab === 'staff' ? (
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
                         <tr>
-                          <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
-                            No users found. Add a user to get started.
-                          </td>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Name</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Email</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Role</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Branch ID</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
                         </tr>
-                      ) : (
-                        users.map((user) => (
-                          <tr key={user.id} className="hover:bg-gray-50">
-                            <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
-                              {user.name}
-                            </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
-                              {user.email}
-                            </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
-                              {user.role}
-                            </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
-                              {user.branch_id ?? '—'}
-                            </td>
-                            <td className="whitespace-nowrap px-6 py-4">
-                              <span
-                                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                                  user.is_active
-                                    ? 'bg-green-100 text-green-700'
-                                    : 'bg-gray-100 text-gray-600'
-                                }`}
-                              >
-                                {user.is_active ? 'Active' : 'Inactive'}
-                              </span>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {users.filter((user) => user.is_active).length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
+                              No users found. Add a user to get started.
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        ) : (
+                          users.filter((user) => user.is_active).map((user) => (
+                            <tr key={user.id} className="hover:bg-gray-50">
+                              <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                                {user.name}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                                {user.email}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
+                                {user.role}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
+                                {user.branch_id ?? '—'}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4">
+                                <span className="inline-flex rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">
+                                  Active
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Name</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Email</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Role</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
+                          <th scope="col" className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {users.filter((user) => !user.is_active).length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
+                              No pending approvals.
+                            </td>
+                          </tr>
+                        ) : (
+                          users.filter((user) => !user.is_active).map((user) => (
+                            <tr key={user.id} className="hover:bg-gray-50">
+                              <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                                {user.name}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                                {user.email}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
+                                {user.role}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4">
+                                <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                                  Pending
+                                </span>
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => openApproveModal(user)}
+                                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                                >
+                                  Approve
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </div>
             </>
@@ -327,6 +465,87 @@ export default function UsersPage() {
                   className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
                 >
                   {submitting ? 'Saving...' : 'Save User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {approveUser && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="approve-user-title"
+        >
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+            <div className="border-b border-gray-100 px-6 py-4">
+              <h2 id="approve-user-title" className="text-lg font-semibold text-gray-900">
+                Approve user
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Assign a role and branch for {approveUser.name} ({approveUser.email}).
+              </p>
+            </div>
+
+            <form onSubmit={(event) => void handleApprove(event)} className="px-6 py-5">
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="approve-role" className="mb-1 block text-sm font-medium text-gray-700">
+                    Role
+                  </label>
+                  <select
+                    id="approve-role"
+                    value={approveRole}
+                    onChange={(event) =>
+                      setApproveRole(event.target.value as (typeof ROLE_OPTIONS)[number])
+                    }
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {ROLE_OPTIONS.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="approve-branch" className="mb-1 block text-sm font-medium text-gray-700">
+                    Branch ID
+                  </label>
+                  <input
+                    id="approve-branch"
+                    required
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={approveBranchId}
+                    onChange={(event) => setApproveBranchId(event.target.value)}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {approveError && (
+                <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{approveError}</p>
+              )}
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeApproveModal}
+                  disabled={approving}
+                  className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={approving}
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                >
+                  {approving ? 'Approving...' : 'Approve'}
                 </button>
               </div>
             </form>

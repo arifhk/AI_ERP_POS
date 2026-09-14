@@ -27,27 +27,59 @@ body {
 
 @media print {
   @page {
-    size: 80mm auto;
-    margin: 4mm;
+    margin: 0;
   }
 
-  body * {
-    visibility: hidden !important;
-  }
-
-  #thermal-receipt,
-  #thermal-receipt * {
-    visibility: visible !important;
-  }
-
-  #thermal-receipt {
-    position: absolute !important;
-    left: 0;
-    top: 0;
-    width: 80mm;
-    max-width: 80mm;
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
     background: #fff !important;
     color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body > *:not(#thermal-receipt-host):not(#barcode-label-host) {
+    display: none !important;
+  }
+
+  #thermal-receipt-host,
+  #barcode-label-host {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  #thermal-receipt-host,
+  #thermal-receipt {
+    width: 80mm !important;
+    max-width: 80mm !important;
+  }
+
+  #barcode-label-host {
+    width: auto !important;
+    height: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  #label-print-grid {
+    display: grid !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  #label-print-grid .barcode-label-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
     box-shadow: none !important;
+    overflow: hidden !important;
   }
 }

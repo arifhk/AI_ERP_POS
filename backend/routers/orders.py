@@ -2,7 +2,7 @@ from datetime import datetime
 from collections import defaultdict
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel, select
@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth import get_current_user
 from database import get_session
-from models import Branch, Order, OrderItem, Product, Tenant, User
+from models import Branch, Order, OrderItem, Product, Tenant, User, parse_iso_datetime
 
 router = APIRouter()
 
@@ -90,12 +90,22 @@ def send_sms_notification(phone: str, amount: float) -> None:
 
 @router.get("/", response_model=list[OrderRead])
 async def list_orders(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[OrderRead]:
-    result = await session.exec(
-        select(Order).options(_ORDER_LOAD).order_by(Order.created_at.desc())
-    )
+    statement = select(Order).options(_ORDER_LOAD).order_by(Order.created_at.desc())
+    try:
+        start = parse_iso_datetime(start_date)
+        end = parse_iso_datetime(end_date, is_end=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    if start is not None:
+        statement = statement.where(Order.created_at >= start)
+    if end is not None:
+        statement = statement.where(Order.created_at <= end)
+    result = await session.exec(statement)
     return [serialize_order(order) for order in result.all()]
 
 
