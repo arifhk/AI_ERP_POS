@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auth import hash_password
+from auth import get_current_user, hash_password
 from database import get_session
 from models import Branch, Tenant, User, UserRole
 
@@ -114,6 +114,7 @@ async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[User]:
     statement = select(User)
     if tenant_id is not None:

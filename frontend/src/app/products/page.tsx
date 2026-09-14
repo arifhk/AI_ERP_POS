@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import Link from 'next/link';
-
-const API_BASE = 'http://localhost:8000';
+import { Sidebar } from '../../components/Sidebar';
+import { API_BASE, apiFetch } from '../../utils/api';
 
 type Product = {
   id: number;
@@ -20,6 +19,25 @@ const emptyForm = {
   price: '',
   stock_quantity: '',
 };
+
+function stockDisplay(quantity: number) {
+  if (quantity <= 0) {
+    return (
+      <span className="inline-flex rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">
+        Out of Stock
+      </span>
+    );
+  }
+  if (quantity <= 5) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
+        Low Stock
+        <span className="font-bold">{quantity}</span>
+      </span>
+    );
+  }
+  return <span className="text-sm font-medium text-gray-700">{quantity}</span>;
+}
 
 function formatPrice(price: number) {
   return `৳ ${price.toLocaleString('en-BD', {
@@ -38,7 +56,7 @@ export default function ProductsPage() {
   const [form, setForm] = useState(emptyForm);
 
   async function loadProducts() {
-    const response = await fetch(`${API_BASE}/products/`);
+    const response = await apiFetch(`${API_BASE}/products/`);
     if (!response.ok) {
       throw new Error('Failed to load products');
     }
@@ -91,7 +109,7 @@ export default function ProductsPage() {
     setFormError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/products/`, {
+      const response = await apiFetch(`${API_BASE}/products/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -132,21 +150,7 @@ export default function ProductsPage() {
   return (
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar Navigation */}
-      <aside className="w-64 bg-gray-900 text-white flex flex-col">
-        <div className="p-6 text-2xl font-bold border-b border-gray-800">
-          AI ERP & POS
-        </div>
-        <nav className="flex-1 p-4 space-y-2">
-          <Link href="/" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Dashboard</Link>
-          <Link href="/tenants" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Tenants</Link>
-          <Link href="/branches" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Branches</Link>
-          <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Users</Link>
-          <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">Products</Link>
-          <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">POS</Link>
-          <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Orders</Link>
-          <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
-        </nav>
-      </aside>
+      <Sidebar active="products" />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -229,8 +233,8 @@ export default function ProductsPage() {
                             <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-900">
                               {formatPrice(product.price)}
                             </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
-                              {product.stock_quantity}
+                            <td className="whitespace-nowrap px-6 py-4">
+                              {stockDisplay(product.stock_quantity)}
                             </td>
                             <td className="whitespace-nowrap px-6 py-4">
                               <span

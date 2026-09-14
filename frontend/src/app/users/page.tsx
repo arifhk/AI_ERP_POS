@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import Link from 'next/link';
-
-const API_BASE = 'http://localhost:8000';
+import { Sidebar } from '../../components/Sidebar';
+import { API_BASE, apiFetch } from '../../utils/api';
 const ROLE_OPTIONS = ['Admin', 'Cashier', 'Manager', 'Inventory'] as const;
 
 type User = {
@@ -32,7 +31,7 @@ export default function UsersPage() {
   const [form, setForm] = useState(emptyForm);
 
   async function loadUsers() {
-    const response = await fetch(`${API_BASE}/users/`);
+    const response = await apiFetch(`${API_BASE}/users/`);
     if (!response.ok) {
       throw new Error('Failed to load users');
     }
@@ -85,7 +84,7 @@ export default function UsersPage() {
     setFormError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/users/`, {
+      const response = await apiFetch(`${API_BASE}/users/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -124,21 +123,7 @@ export default function UsersPage() {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      <aside className="w-64 bg-gray-900 text-white flex flex-col">
-        <div className="p-6 text-2xl font-bold border-b border-gray-800">
-          AI ERP & POS
-        </div>
-        <nav className="flex-1 p-4 space-y-2">
-          <Link href="/" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Dashboard</Link>
-          <Link href="/tenants" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Tenants</Link>
-          <Link href="/branches" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Branches</Link>
-          <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">Users</Link>
-          <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Products</Link>
-          <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">POS</Link>
-          <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Orders</Link>
-          <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
-        </nav>
-      </aside>
+      <Sidebar active="users" />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="flex items-center justify-between p-4 bg-white border-b border-gray-200">

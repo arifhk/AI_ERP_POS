@@ -63,12 +63,37 @@ def _align_users_schema(connection) -> None:
         connection.execute(text("ALTER TABLE users ADD COLUMN hashed_password VARCHAR(255)"))
 
 
+def _align_orders_schema(connection) -> None:
+    """Add optional customer_phone for SMS / loyalty without dropping sales."""
+    inspector = inspect(connection)
+    if not inspector.has_table("orders"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("orders")}
+    if "customer_phone" not in columns:
+        connection.execute(text("ALTER TABLE orders ADD COLUMN customer_phone VARCHAR(50)"))
+
+
+def _align_pluspoint_admin_role(connection) -> None:
+    """Ensure the Plus Point operator account is stored as Admin, not Cashier."""
+    inspector = inspect(connection)
+    if not inspector.has_table("users"):
+        return
+    connection.execute(
+        text(
+            "UPDATE users SET role = 'Admin' "
+            "WHERE lower(email) = 'admin@pluspoint.com' AND lower(role) != 'admin'"
+        )
+    )
+
+
 async def init_db() -> None:
     """Create tables from SQLModel metadata. Import models before calling."""
     async with engine.begin() as conn:
         await conn.run_sync(_align_products_schema)
         await conn.run_sync(_align_users_schema)
+        await conn.run_sync(_align_orders_schema)
         await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(_align_pluspoint_admin_role)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

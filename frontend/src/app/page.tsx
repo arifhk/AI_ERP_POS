@@ -1,9 +1,24 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { Sidebar } from '../components/Sidebar';
+import { API_BASE, apiFetch } from '../utils/api';
+import { getStoredRole } from '../utils/auth';
 
-const API_BASE = 'http://localhost:8000';
+type ChartPoint = {
+  date: string;
+  total: number;
+};
 
 function formatCurrency(amount: number) {
   return `৳ ${amount.toLocaleString('en-BD', {
@@ -12,31 +27,65 @@ function formatCurrency(amount: number) {
   })}`;
 }
 
+function formatChartDate(value: string) {
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function parseChartData(payload: unknown): ChartPoint[] {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  return payload
+    .map((row) => {
+      if (!row || typeof row !== 'object') {
+        return null;
+      }
+      const date = 'date' in row && typeof row.date === 'string' ? row.date : null;
+      const total = 'total' in row && typeof row.total === 'number' ? row.total : 0;
+      return date ? { date, total } : null;
+    })
+    .filter((row): row is ChartPoint => row !== null);
+}
+
 export default function Dashboard() {
+  const router = useRouter();
   const [totalSales, setTotalSales] = useState(0);
   const [activeBranches, setActiveBranches] = useState(0);
   const [newUsers, setNewUsers] = useState(0);
+  const [chartData, setChartData] = useState<ChartPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const isAdmin = getStoredRole()?.toLowerCase() === 'admin';
+    if (!isAdmin) {
+      router.push('/pos');
+      return;
+    }
+
     let cancelled = false;
 
     async function loadDashboard() {
       try {
-        const [branchesRes, usersRes, statsRes] = await Promise.all([
-          fetch(`${API_BASE}/branches`),
-          fetch(`${API_BASE}/users`),
-          fetch(`${API_BASE}/dashboard-stats/`),
+        const [branchesRes, usersRes, statsRes, chartRes] = await Promise.all([
+          apiFetch(`${API_BASE}/branches/`),
+          apiFetch(`${API_BASE}/users/`),
+          apiFetch(`${API_BASE}/dashboard-stats/`),
+          apiFetch(`${API_BASE}/chart-data/`),
         ]);
 
-        if (!branchesRes.ok || !usersRes.ok || !statsRes.ok) {
+        if (!branchesRes.ok || !usersRes.ok || !statsRes.ok || !chartRes.ok) {
           throw new Error('Failed to load dashboard data');
         }
 
         const branches: unknown = await branchesRes.json();
         const users: unknown = await usersRes.json();
         const stats: unknown = await statsRes.json();
+        const chart: unknown = await chartRes.json();
         const sales =
           stats &&
           typeof stats === 'object' &&
@@ -58,6 +107,7 @@ export default function Dashboard() {
           setTotalSales(sales);
           setActiveBranches(Array.isArray(branches) ? branches.length : 0);
           setNewUsers(userCount);
+          setChartData(parseChartData(chart));
         }
       } catch {
         if (!cancelled) {
@@ -74,26 +124,11 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   return (
     <div className="flex h-screen bg-gray-100">
-      {/* Sidebar Navigation */}
-      <aside className="w-64 bg-gray-900 text-white flex flex-col">
-        <div className="p-6 text-2xl font-bold border-b border-gray-800">
-          AI ERP & POS
-        </div>
-        <nav className="flex-1 p-4 space-y-2">
-          <Link href="/" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">Dashboard</Link>
-          <Link href="/tenants" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Tenants</Link>
-          <Link href="/branches" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Branches</Link>
-          <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Users</Link>
-          <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Products</Link>
-          <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">POS</Link>
-          <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Orders</Link>
-          <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
-        </nav>
-      </aside>
+      <Sidebar active="dashboard" />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -169,6 +204,72 @@ export default function Dashboard() {
                     <div className="p-3 bg-purple-100 rounded-full text-purple-600 text-2xl">👥</div>
                   </div>
                 </div>
+              </div>
+
+              <div className="mb-8 rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                <div className="mb-6 flex items-end justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-800">Sales trend</h2>
+                    <p className="mt-1 text-sm text-gray-500">Daily order totals across all branches</p>
+                  </div>
+                  <p className="text-sm font-medium text-indigo-600">
+                    {chartData.length === 1 ? '1 day' : `${chartData.length} days`}
+                  </p>
+                </div>
+                {chartData.length === 0 ? (
+                  <div className="flex h-72 items-center justify-center rounded-lg bg-slate-50 text-sm text-gray-500">
+                    No sales data yet. Completed POS orders will appear here.
+                  </div>
+                ) : (
+                  <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.28} />
+                            <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.04} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" vertical={false} />
+                        <XAxis
+                          dataKey="date"
+                          tickFormatter={formatChartDate}
+                          tick={{ fill: '#64748b', fontSize: 12 }}
+                          axisLine={{ stroke: '#e2e8f0' }}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          tickFormatter={(value: number) =>
+                            `৳ ${Number(value).toLocaleString('en-BD', { maximumFractionDigits: 0 })}`
+                          }
+                          tick={{ fill: '#64748b', fontSize: 12 }}
+                          axisLine={false}
+                          tickLine={false}
+                          width={72}
+                        />
+                        <Tooltip
+                          cursor={{ stroke: '#c7d2fe', strokeWidth: 1 }}
+                          formatter={(value) => [formatCurrency(Number(value ?? 0)), 'Sales']}
+                          labelFormatter={(label) => formatChartDate(String(label))}
+                          contentStyle={{
+                            borderRadius: 12,
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 10px 15px -3px rgb(15 23 42 / 0.08)',
+                            fontSize: 13,
+                          }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="total"
+                          stroke="#4f46e5"
+                          strokeWidth={2.5}
+                          fill="url(#salesFill)"
+                          activeDot={{ r: 5, stroke: '#fff', strokeWidth: 2 }}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
               </div>
 
               {/* Recent Activity Area */}

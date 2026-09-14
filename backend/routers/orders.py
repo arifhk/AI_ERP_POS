@@ -1,5 +1,6 @@
 from datetime import datetime
 from collections import defaultdict
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -7,8 +8,9 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from auth import get_current_user
 from database import get_session
-from models import Branch, Order, OrderItem, Product, Tenant
+from models import Branch, Order, OrderItem, Product, Tenant, User
 
 router = APIRouter()
 
@@ -23,6 +25,7 @@ class OrderCreate(SQLModel):
     tenant_id: int
     branch_id: int
     items: list[OrderItemCreate]
+    customer_phone: Optional[str] = None
 
 
 class OrderItemRead(SQLModel):
@@ -39,6 +42,7 @@ class OrderRead(SQLModel):
     branch_id: int
     total_amount: float
     created_at: datetime
+    customer_phone: Optional[str] = None
     items: list[OrderItemRead] = []
 
 
@@ -52,6 +56,7 @@ def serialize_order(order: Order) -> OrderRead:
         branch_id=order.branch_id,
         total_amount=order.total_amount,
         created_at=order.created_at,
+        customer_phone=order.customer_phone,
         items=[
             OrderItemRead(
                 id=item.id or 0,
@@ -79,9 +84,14 @@ async def _require_scope(session: AsyncSession, tenant_id: int, branch_id: int) 
         )
 
 
+def send_sms_notification(phone: str, amount: float) -> None:
+    print(f"SMS sent to {phone} for amount {amount}")
+
+
 @router.get("/", response_model=list[OrderRead])
 async def list_orders(
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[OrderRead]:
     result = await session.exec(
         select(Order).options(_ORDER_LOAD).order_by(Order.created_at.desc())
@@ -93,6 +103,7 @@ async def list_orders(
 async def create_order(
     payload: OrderCreate,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> OrderRead:
     if not payload.items:
         raise HTTPException(
@@ -146,10 +157,12 @@ async def create_order(
         products[product_id] = product
 
     total_amount = sum(item.quantity * item.price for item in payload.items)
+    phone = (payload.customer_phone or "").strip() or None
     order = Order(
         tenant_id=payload.tenant_id,
         branch_id=payload.branch_id,
         total_amount=round(total_amount, 2),
+        customer_phone=phone,
     )
     session.add(order)
 
@@ -180,4 +193,6 @@ async def create_order(
             select(Order).where(Order.id == order.id).options(_ORDER_LOAD)
         )
     ).one()
+    if loaded.customer_phone:
+        send_sms_notification(loaded.customer_phone, loaded.total_amount)
     return serialize_order(loaded)

@@ -108,6 +108,7 @@ class Order(SQLModel, table=True):
     tenant_id: int = Field(foreign_key="tenants.id", index=True)
     branch_id: int = Field(foreign_key="branches.id", index=True)
     total_amount: float = Field(ge=0)
+    customer_phone: Optional[str] = Field(default=None, max_length=50)
     created_at: datetime = Field(default_factory=utcnow)
 
     tenant: Tenant = Relationship(back_populates="orders")

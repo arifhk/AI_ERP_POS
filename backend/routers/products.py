@@ -6,8 +6,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from auth import get_current_user
 from database import get_session
-from models import Branch, Product, Tenant
+from models import Branch, Product, Tenant, User
 
 router = APIRouter()
 
@@ -114,6 +115,7 @@ async def list_products(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[Product]:
     statement = select(Product)
     if tenant_id is not None:

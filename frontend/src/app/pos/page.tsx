@@ -1,15 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import Link from 'next/link';
 import {
   ThermalReceipt,
   VAT_RATE,
   formatPrice,
   type Receipt,
 } from '../../components/ThermalReceipt';
-
-const API_BASE = 'http://localhost:8000';
+import { Sidebar } from '../../components/Sidebar';
+import { API_BASE, apiFetch } from '../../utils/api';
 
 type Product = {
   id: number;
@@ -37,9 +36,10 @@ export default function PosPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [customerPhone, setCustomerPhone] = useState('');
 
   async function loadProducts() {
-    const response = await fetch(`${API_BASE}/products/`);
+    const response = await apiFetch(`${API_BASE}/products/`);
     if (!response.ok) {
       throw new Error('Failed to load products');
     }
@@ -97,13 +97,20 @@ export default function PosPage() {
 
   function addToCart(product: Product) {
     if (product.stock_quantity <= 0) {
+      setNotice('Out of Stock!');
+      return;
+    }
+
+    const existing = cart.find((item) => item.id === product.id);
+    if (existing && existing.quantity >= existing.stock_quantity) {
+      setNotice('Out of Stock!');
       return;
     }
 
     setNotice(null);
     setCart((current) => {
-      const existing = current.find((item) => item.id === product.id);
-      if (!existing) {
+      const inCart = current.find((item) => item.id === product.id);
+      if (!inCart) {
         return [
           ...current,
           {
@@ -115,7 +122,7 @@ export default function PosPage() {
           },
         ];
       }
-      if (existing.quantity >= existing.stock_quantity) {
+      if (inCart.quantity >= inCart.stock_quantity) {
         return current;
       }
       return current.map((item) =>
@@ -125,6 +132,12 @@ export default function PosPage() {
   }
 
   function changeQuantity(productId: number, delta: number) {
+    const target = cart.find((item) => item.id === productId);
+    if (target && delta > 0 && target.quantity >= target.stock_quantity) {
+      setNotice('Out of Stock!');
+      return;
+    }
+
     setNotice(null);
     setCart((current) =>
       current.flatMap((item) => {
@@ -176,13 +189,16 @@ export default function PosPage() {
     setCheckingOut(true);
     setNotice(null);
 
+    const phone = customerPhone.trim();
+
     try {
-      const response = await fetch(`${API_BASE}/orders/`, {
+      const response = await apiFetch(`${API_BASE}/orders/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenant_id: 1,
           branch_id: 1,
+          customer_phone: phone || null,
           items: cart.map((item) => ({
             product_id: item.id,
             quantity: item.quantity,
@@ -216,8 +232,10 @@ export default function PosPage() {
         subtotal,
         vat,
         grandTotal,
+        customerPhone: phone || null,
       });
       setCart([]);
+      setCustomerPhone('');
       await loadProducts();
     } catch (caught) {
       const message =
@@ -231,27 +249,14 @@ export default function PosPage() {
   function startNewOrder() {
     setReceipt(null);
     setCart([]);
+    setCustomerPhone('');
     setNotice(null);
   }
 
   return (
     <>
     <div className="flex h-screen bg-gray-100 print:hidden">
-      <aside className="w-64 bg-gray-900 text-white flex flex-col">
-        <div className="p-6 text-2xl font-bold border-b border-gray-800">
-          AI ERP & POS
-        </div>
-        <nav className="flex-1 p-4 space-y-2">
-          <Link href="/" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Dashboard</Link>
-          <Link href="/tenants" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Tenants</Link>
-          <Link href="/branches" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Branches</Link>
-          <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Users</Link>
-          <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Products</Link>
-          <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">POS</Link>
-          <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Orders</Link>
-          <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
-        </nav>
-      </aside>
+      <Sidebar active="pos" />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex items-center justify-between border-b border-gray-200 bg-white p-4">
@@ -292,6 +297,12 @@ export default function PosPage() {
               />
             </form>
 
+            {notice ? (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700" role="alert">
+                {notice}
+              </div>
+            ) : null}
+
             {loading ? (
               <div className="flex flex-1 items-center justify-center rounded-lg border border-gray-100 bg-white shadow-sm">
                 <div className="flex flex-col items-center gap-3">
@@ -317,9 +328,10 @@ export default function PosPage() {
                         <button
                           key={product.id}
                           type="button"
-                          disabled={outOfStock}
                           onClick={() => addToCart(product)}
-                          className="rounded-xl border border-gray-100 bg-white p-4 text-left shadow-sm transition hover:border-indigo-200 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
+                          className={`rounded-xl border border-gray-100 bg-white p-4 text-left shadow-sm transition hover:border-indigo-200 hover:shadow-md ${
+                            outOfStock ? 'opacity-50' : ''
+                          }`}
                         >
                           <p className="truncate text-sm font-semibold text-gray-900">{product.name}</p>
                           <p className="mt-1 font-mono text-xs text-gray-400">{product.barcode}</p>
@@ -378,7 +390,8 @@ export default function PosPage() {
                           <button
                             type="button"
                             onClick={() => changeQuantity(item.id, 1)}
-                            className="px-2.5 py-1 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+                            disabled={item.quantity >= item.stock_quantity}
+                            className="px-2.5 py-1 text-sm font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-300"
                             aria-label={`Increase ${item.name}`}
                           >
                             +
@@ -418,6 +431,18 @@ export default function PosPage() {
                   <span>{formatPrice(grandTotal)}</span>
                 </div>
               </div>
+              <label className="mt-4 block">
+                <span className="mb-1.5 block text-xs font-medium text-gray-600">
+                  Customer Phone (Optional)
+                </span>
+                <input
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(event) => setCustomerPhone(event.target.value)}
+                  placeholder="01XXXXXXXXX"
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </label>
               <button
                 type="button"
                 onClick={() => void checkout()}

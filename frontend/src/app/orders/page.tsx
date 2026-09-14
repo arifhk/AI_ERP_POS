@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import {
   ThermalReceipt,
   formatPrice,
@@ -9,8 +8,8 @@ import {
   receiptTotals,
   type Receipt,
 } from '../../components/ThermalReceipt';
-
-const API_BASE = 'http://localhost:8000';
+import { Sidebar } from '../../components/Sidebar';
+import { API_BASE, apiFetch } from '../../utils/api';
 
 type OrderItem = {
   id: number;
@@ -26,6 +25,7 @@ type Order = {
   branch_id: number;
   total_amount: number;
   created_at: string;
+  customer_phone?: string | null;
   items: OrderItem[];
 };
 
@@ -39,6 +39,7 @@ function orderToReceipt(order: Order): Receipt {
   return {
     orderId: order.id,
     createdAt: order.created_at,
+    customerPhone: order.customer_phone ?? null,
     items,
     ...totals,
   };
@@ -55,7 +56,7 @@ export default function OrdersPage() {
 
     async function loadOrders() {
       try {
-        const response = await fetch(`${API_BASE}/orders/`);
+        const response = await apiFetch(`${API_BASE}/orders/`);
         if (!response.ok) {
           throw new Error('Failed to load orders');
         }
@@ -80,24 +81,37 @@ export default function OrdersPage() {
     };
   }, []);
 
+  function csvCell(value: string | number) {
+    const text = String(value);
+    if (/[",\n\r]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  }
+
+  function exportOrdersToCsv(rows: Order[]) {
+    const header = ['Order ID', 'Date', 'Total Amount'];
+    const body = rows.map((order) => [
+      csvCell(order.id),
+      csvCell(formatReceiptDate(order.created_at)),
+      csvCell(order.total_amount.toFixed(2)),
+    ].join(','));
+    const csv = `\uFEFF${[header.join(','), ...body].join('\r\n')}`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'sales_report.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <>
       <div className="flex h-screen bg-gray-100 print:hidden">
-        <aside className="w-64 bg-gray-900 text-white flex flex-col">
-          <div className="p-6 text-2xl font-bold border-b border-gray-800">
-            AI ERP & POS
-          </div>
-          <nav className="flex-1 p-4 space-y-2">
-            <Link href="/" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Dashboard</Link>
-            <Link href="/tenants" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Tenants</Link>
-            <Link href="/branches" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Branches</Link>
-            <Link href="/users" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Users</Link>
-            <Link href="/products" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Products</Link>
-            <Link href="/pos" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">POS</Link>
-            <Link href="/orders" className="block py-2.5 px-4 rounded transition duration-200 bg-gray-800 hover:bg-gray-700">Orders</Link>
-            <Link href="/settings" className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Settings</Link>
-          </nav>
-        </aside>
+        <Sidebar active="orders" />
 
         <div className="flex-1 flex flex-col overflow-hidden">
           <header className="flex items-center justify-between p-4 bg-white border-b border-gray-200">
@@ -117,9 +131,19 @@ export default function OrdersPage() {
           </header>
 
           <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
-            <div className="mb-6">
-              <h1 className="text-3xl font-semibold text-gray-800">Sales History</h1>
-              <p className="mt-1 text-sm text-gray-500">Review past POS orders and reprint thermal receipts.</p>
+            <div className="mb-6 flex items-center justify-between gap-4">
+              <div>
+                <h1 className="text-3xl font-semibold text-gray-800">Sales History</h1>
+                <p className="mt-1 text-sm text-gray-500">Review past POS orders and reprint thermal receipts.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => exportOrdersToCsv(orders)}
+                disabled={loading || orders.length === 0}
+                className="rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-emerald-300"
+              >
+                Export to CSV
+              </button>
             </div>
 
             {loading ? (

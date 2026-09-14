@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auth import create_access_token, hash_password, verify_password
+from auth import create_access_token, get_current_user, hash_password, verify_password
 from database import get_session, init_db
 import models  # noqa: F401  — register tables on SQLModel.metadata
 from models import Order, User
@@ -123,12 +123,13 @@ async def login(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user",
         )
-    return Token(access_token=create_access_token({"sub": str(user.id)}))
+    return Token(access_token=create_access_token({"sub": user.email, "role": user.role}))
 
 
 @app.get("/dashboard-stats/")
 async def dashboard_stats(
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, float | int]:
     sales_statement = select(func.coalesce(func.sum(Order.total_amount), 0.0))
     total_sales = (await session.exec(sales_statement)).one()
@@ -137,6 +138,30 @@ async def dashboard_stats(
         "total_sales": float(total_sales or 0),
         "user_count": int(user_count or 0),
     }
+
+
+class ChartPoint(SQLModel):
+    date: str
+    total: float
+
+
+@app.get("/chart-data/", response_model=list[ChartPoint])
+async def chart_data(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[ChartPoint]:
+    day = func.date(Order.created_at)
+    statement = (
+        select(day, func.coalesce(func.sum(Order.total_amount), 0.0))
+        .group_by(day)
+        .order_by(day)
+    )
+    rows = (await session.exec(statement)).all()
+    return [
+        ChartPoint(date=str(row[0]), total=round(float(row[1] or 0), 2))
+        for row in rows
+        if row[0] is not None
+    ]
 
 
 @app.get("/health")

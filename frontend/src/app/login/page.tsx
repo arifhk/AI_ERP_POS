@@ -3,11 +3,14 @@
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 
+const API_BASE = 'http://localhost:8000';
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -16,8 +19,49 @@ export default function LoginPage() {
     }
 
     setSubmitting(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    router.push('/');
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          username: email,
+          password,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          response.status === 401
+            ? 'Incorrect email or password'
+            : 'Unable to sign in. Please try again.',
+        );
+      }
+
+      const data: { access_token?: string } = await response.json();
+      if (!data.access_token) {
+        throw new Error('Unable to sign in. Please try again.');
+      }
+
+      localStorage.setItem('token', data.access_token);
+      const payload = JSON.parse(
+        atob(
+          data.access_token
+            .split('.')[1]
+            .replace(/-/g, '+')
+            .replace(/_/g, '/'),
+        ),
+      ) as { role?: string };
+      localStorage.setItem('userRole', payload.role ?? '');
+      const isAdmin = (payload.role ?? '').toLowerCase() === 'admin';
+      router.push(isAdmin ? '/' : '/pos');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Incorrect email or password');
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -83,6 +127,12 @@ export default function LoginPage() {
               {submitting ? 'Logging in...' : 'Sign In'}
             </button>
           </form>
+
+          {error ? (
+            <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-center text-sm font-medium text-red-700" role="alert">
+              {error}
+            </p>
+          ) : null}
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-400">

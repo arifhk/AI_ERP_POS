@@ -16,6 +16,7 @@ export type Receipt = {
   subtotal: number;
   vat: number;
   grandTotal: number;
+  customerPhone?: string | null;
 };
 
 export function formatPrice(price: number) {
@@ -72,6 +73,12 @@ export function ThermalReceipt({ receipt }: { receipt: Receipt }) {
           <span>Order ID</span>
           <span>#{receipt.orderId}</span>
         </div>
+        {receipt.customerPhone ? (
+          <div className="flex justify-between gap-2">
+            <span>Customer</span>
+            <span>{receipt.customerPhone}</span>
+          </div>
+        ) : null}
       </div>
 
       <div className="my-2 border-t border-dashed border-black" />
