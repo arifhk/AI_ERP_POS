@@ -2,8 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { Sidebar } from '../../components/Sidebar';
-
-const API_BASE = 'http://localhost:8000';
+import { API_BASE } from '../../utils/api';
 
 type Tenant = {
   id: number;

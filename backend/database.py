@@ -7,9 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-# Local development. For PostgreSQL later:
-# DATABASE_URL = "postgresql+asyncpg://user:password@localhost:5432/erp_pos"
-DATABASE_URL = "sqlite+aiosqlite:///./erp_pos.db"
+from config import DATABASE_URL
 
 connect_args: dict = {}
 if DATABASE_URL.startswith("sqlite"):

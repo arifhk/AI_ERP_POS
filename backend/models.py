@@ -121,6 +121,7 @@ class Product(SQLModel, table=True):
     branch: Optional[Branch] = Relationship(back_populates="products")
     order_items: list["OrderItem"] = Relationship(back_populates="product")
     purchases: list["Purchase"] = Relationship(back_populates="product")
+    sales_returns: list["SalesReturn"] = Relationship(back_populates="product")
 
 
 class Order(SQLModel, table=True):
@@ -220,6 +221,49 @@ class PurchaseRead(SQLModel):
     supplier_name: str
     quantity_added: int
     cost_price: float
+    date: datetime
+    tenant_id: int
+    branch_id: int
+    created_by: str
+
+
+class SalesReturn(SQLModel, table=True):
+    """Customer refund that restocks inventory."""
+
+    __tablename__ = "sales_returns"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    order_id: int = Field(index=True)
+    product_id: int = Field(foreign_key="products.id", index=True)
+    quantity_returned: int = Field(ge=1)
+    refund_amount: float = Field(ge=0)
+    reason: str = Field(max_length=500)
+    date: datetime = Field(default_factory=utcnow, index=True)
+    tenant_id: int = Field(foreign_key="tenants.id", index=True)
+    branch_id: int = Field(foreign_key="branches.id", index=True)
+    created_by: str = Field(max_length=255, index=True)
+
+    product: Optional[Product] = Relationship(back_populates="sales_returns")
+
+
+class ReturnCreate(SQLModel):
+    order_id: int
+    product_id: int
+    quantity_returned: int
+    refund_amount: float
+    reason: str
+    tenant_id: Optional[int] = None
+    branch_id: Optional[int] = None
+
+
+class ReturnRead(SQLModel):
+    id: int
+    order_id: int
+    product_id: int
+    product_name: str = ""
+    quantity_returned: int
+    refund_amount: float
+    reason: str
     date: datetime
     tenant_id: int
     branch_id: int

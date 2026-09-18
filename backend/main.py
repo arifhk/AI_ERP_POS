@@ -12,6 +12,7 @@ from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth import create_access_token, get_current_user, hash_password, verify_password
+from config import cors_origins
 from database import get_session, init_db
 import models  # noqa: F401  — register tables on SQLModel.metadata
 from models import (
@@ -23,6 +24,9 @@ from models import (
     Purchase,
     PurchaseCreate,
     PurchaseRead,
+    ReturnCreate,
+    ReturnRead,
+    SalesReturn,
     User,
     parse_iso_datetime,
 )
@@ -46,10 +50,9 @@ app = FastAPI(
 
 from fastapi.middleware.cors import CORSMiddleware
 
-# ফ্রন্টএন্ডকে ডেটা নেওয়ার পারমিশন দেওয়া
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -418,6 +421,161 @@ async def list_purchases(
         statement = statement.where(Purchase.branch_id == current_user.branch_id)
     purchases = list((await session.exec(statement)).all())
     return [_serialize_purchase(purchase) for purchase in purchases]
+
+
+def _serialize_return(row: SalesReturn) -> ReturnRead:
+    product_name = ""
+    if row.product is not None:
+        product_name = row.product.name
+    return ReturnRead(
+        id=row.id or 0,
+        order_id=row.order_id,
+        product_id=row.product_id,
+        product_name=product_name,
+        quantity_returned=row.quantity_returned,
+        refund_amount=row.refund_amount,
+        reason=row.reason,
+        date=row.date,
+        tenant_id=row.tenant_id,
+        branch_id=row.branch_id,
+        created_by=row.created_by,
+    )
+
+
+@app.post("/returns/", response_model=ReturnRead, status_code=status.HTTP_201_CREATED)
+async def create_return(
+    payload: ReturnCreate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ReturnRead:
+    reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reason is required",
+        )
+    if payload.quantity_returned < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Quantity returned must be at least 1",
+        )
+    if payload.refund_amount < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Refund amount cannot be negative",
+        )
+
+    order = (
+        await session.exec(
+            select(Order)
+            .where(Order.id == payload.order_id)
+            .options(selectinload(Order.items))
+        )
+    ).first()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+    if _is_cashier_user(current_user):
+        if current_user.branch_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cashier account is not assigned to a branch",
+            )
+        if order.branch_id != current_user.branch_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot return an order from another branch",
+            )
+
+    sold_qty = sum(
+        item.quantity for item in order.items if item.product_id == payload.product_id
+    )
+    if sold_qty < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected product is not on this order",
+        )
+
+    already_returned = (
+        await session.exec(
+            select(func.coalesce(func.sum(SalesReturn.quantity_returned), 0)).where(
+                SalesReturn.order_id == payload.order_id,
+                SalesReturn.product_id == payload.product_id,
+            )
+        )
+    ).one()
+    remaining = int(sold_qty) - int(already_returned or 0)
+    if remaining < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="All units of this product have already been returned",
+        )
+    if payload.quantity_returned > remaining:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot return more than {remaining} remaining unit(s)",
+        )
+
+    product = (
+        await session.exec(
+            select(Product).where(Product.id == payload.product_id).with_for_update()
+        )
+    ).first()
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    tenant_id = payload.tenant_id or order.tenant_id
+    branch_id = payload.branch_id or order.branch_id
+    if _is_cashier_user(current_user):
+        branch_id = current_user.branch_id or branch_id
+        tenant_id = current_user.tenant_id or tenant_id
+
+    row = SalesReturn(
+        order_id=order.id or payload.order_id,
+        product_id=product.id or payload.product_id,
+        quantity_returned=payload.quantity_returned,
+        refund_amount=float(payload.refund_amount),
+        reason=reason,
+        tenant_id=tenant_id,
+        branch_id=branch_id,
+        created_by=current_user.email,
+    )
+    product.stock_quantity += payload.quantity_returned
+    session.add(row)
+    session.add(product)
+    await session.commit()
+    await session.refresh(row)
+    row.product = product
+    return _serialize_return(row)
+
+
+@app.get("/returns/", response_model=list[ReturnRead])
+async def list_returns(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[ReturnRead]:
+    statement = (
+        select(SalesReturn)
+        .options(selectinload(SalesReturn.product))
+        .order_by(SalesReturn.date.desc(), SalesReturn.id.desc())
+    )
+    try:
+        start = parse_iso_datetime(start_date)
+        end = parse_iso_datetime(end_date, is_end=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    if start is not None:
+        statement = statement.where(SalesReturn.date >= start)
+    if end is not None:
+        statement = statement.where(SalesReturn.date <= end)
+    if _is_cashier_user(current_user):
+        if current_user.branch_id is None:
+            return []
+        statement = statement.where(SalesReturn.branch_id == current_user.branch_id)
+    rows = list((await session.exec(statement)).all())
+    return [_serialize_return(row) for row in rows]
 
 
 @app.get("/health")

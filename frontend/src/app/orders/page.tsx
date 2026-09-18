@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ThermalReceipt,
@@ -52,20 +52,30 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [returnOrder, setReturnOrder] = useState<Order | null>(null);
+  const [returnProductId, setReturnProductId] = useState('');
+  const [returnQty, setReturnQty] = useState('1');
+  const [returnAmount, setReturnAmount] = useState('');
+  const [returnReason, setReturnReason] = useState('');
+  const [returnError, setReturnError] = useState<string | null>(null);
+  const [returnSubmitting, setReturnSubmitting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  async function loadOrders() {
+    const response = await apiFetch(`${API_BASE}/orders/`);
+    if (!response.ok) {
+      throw new Error('Failed to load orders');
+    }
+    const data: unknown = await response.json();
+    setOrders(Array.isArray(data) ? (data as Order[]) : []);
+  }
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadOrders() {
+    async function initialLoad() {
       try {
-        const response = await apiFetch(`${API_BASE}/orders/`);
-        if (!response.ok) {
-          throw new Error('Failed to load orders');
-        }
-        const data: unknown = await response.json();
-        if (!cancelled) {
-          setOrders(Array.isArray(data) ? (data as Order[]) : []);
-        }
+        await loadOrders();
       } catch {
         if (!cancelled) {
           setError('Unable to load orders from the server.');
@@ -77,11 +87,96 @@ export default function OrdersPage() {
       }
     }
 
-    loadOrders();
+    initialLoad();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+    const timer = window.setTimeout(() => setToast(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  function selectedReturnItem(order: Order) {
+    return order.items.find((item) => String(item.product_id) === returnProductId) ?? order.items[0];
+  }
+
+  function openReturnModal(order: Order) {
+    const first = order.items[0];
+    setReturnOrder(order);
+    setReturnProductId(first ? String(first.product_id) : '');
+    setReturnQty('1');
+    setReturnAmount(first ? (first.price * 1).toFixed(2) : '');
+    setReturnReason('');
+    setReturnError(null);
+  }
+
+  function closeReturnModal() {
+    if (returnSubmitting) {
+      return;
+    }
+    setReturnOrder(null);
+    setReturnError(null);
+  }
+
+  function applyReturnItem(order: Order, productId: string) {
+    const item = order.items.find((row) => String(row.product_id) === productId);
+    setReturnProductId(productId);
+    const qty = Math.max(1, Number(returnQty) || 1);
+    if (item) {
+      const capped = Math.min(qty, item.quantity);
+      setReturnQty(String(capped));
+      setReturnAmount((item.price * capped).toFixed(2));
+    }
+  }
+
+  async function handleReturnSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!returnOrder) {
+      return;
+    }
+    setReturnSubmitting(true);
+    setReturnError(null);
+
+    try {
+      const response = await apiFetch(`${API_BASE}/returns/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order_id: returnOrder.id,
+          product_id: Number(returnProductId),
+          quantity_returned: Number(returnQty),
+          refund_amount: Number(returnAmount),
+          reason: returnReason.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        let message = 'Could not process the return.';
+        try {
+          const payload = (await response.json()) as { detail?: unknown };
+          if (typeof payload.detail === 'string') {
+            message = payload.detail;
+          }
+        } catch {
+          // Keep the generic message if the error body is not JSON.
+        }
+        throw new Error(message);
+      }
+
+      setReturnOrder(null);
+      setToast('Return processed. Stock has been restocked.');
+      await loadOrders();
+    } catch (caught) {
+      setReturnError(caught instanceof Error ? caught.message : 'Could not process the return.');
+    } finally {
+      setReturnSubmitting(false);
+    }
+  }
 
   function csvCell(value: string | number) {
     const text = String(value);
@@ -194,13 +289,23 @@ export default function OrdersPage() {
                                 {formatPrice(order.total_amount)}
                               </td>
                               <td className="whitespace-nowrap px-6 py-4 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => setReceipt(orderToReceipt(order))}
-                                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
-                                >
-                                  View/Print
-                                </button>
+                                <div className="inline-flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setReceipt(orderToReceipt(order))}
+                                    className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                                  >
+                                    View/Print
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openReturnModal(order)}
+                                    disabled={!order.items?.length}
+                                    className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    Process Return
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))
@@ -255,6 +360,132 @@ export default function OrdersPage() {
             document.body,
           )}
         </>
+      ) : null}
+
+      {returnOrder ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 print:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="process-return-title"
+        >
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+            <div className="border-b border-gray-100 px-6 py-4">
+              <h2 id="process-return-title" className="text-lg font-semibold text-gray-900">
+                Process Return
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Order #{returnOrder.id}. Returned units are added back to stock.
+              </p>
+            </div>
+            <form onSubmit={(event) => void handleReturnSubmit(event)} className="px-6 py-5">
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="return-item" className="mb-1 block text-sm font-medium text-gray-700">
+                    Item
+                  </label>
+                  <select
+                    id="return-item"
+                    required
+                    value={returnProductId}
+                    onChange={(event) => applyReturnItem(returnOrder, event.target.value)}
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {returnOrder.items.map((item) => (
+                      <option key={`${item.id}-${item.product_id}`} value={item.product_id}>
+                        {(item.name?.trim() ? item.name : `Product #${item.product_id}`)} × {item.quantity}{' '}
+                        ({formatPrice(item.price)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="return-qty" className="mb-1 block text-sm font-medium text-gray-700">
+                    Quantity returned
+                  </label>
+                  <input
+                    id="return-qty"
+                    required
+                    type="number"
+                    min="1"
+                    max={selectedReturnItem(returnOrder)?.quantity ?? 1}
+                    step="1"
+                    value={returnQty}
+                    onChange={(event) => {
+                      const nextQty = event.target.value;
+                      setReturnQty(nextQty);
+                      const item = selectedReturnItem(returnOrder);
+                      const parsed = Number(nextQty);
+                      if (item && Number.isFinite(parsed) && parsed > 0) {
+                        setReturnAmount((item.price * parsed).toFixed(2));
+                      }
+                    }}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="return-amount" className="mb-1 block text-sm font-medium text-gray-700">
+                    Refund amount
+                  </label>
+                  <input
+                    id="return-amount"
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={returnAmount}
+                    onChange={(event) => setReturnAmount(event.target.value)}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="return-reason" className="mb-1 block text-sm font-medium text-gray-700">
+                    Reason
+                  </label>
+                  <input
+                    id="return-reason"
+                    required
+                    value={returnReason}
+                    onChange={(event) => setReturnReason(event.target.value)}
+                    placeholder="e.g. Size mismatch"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {returnError && (
+                <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{returnError}</p>
+              )}
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeReturnModal}
+                  disabled={returnSubmitting}
+                  className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={returnSubmitting || !returnOrder.items.length}
+                  className="rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-amber-300"
+                >
+                  {returnSubmitting ? 'Saving...' : 'Confirm Return'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {toast ? (
+        <div
+          className="fixed bottom-6 right-6 z-[60] rounded-lg bg-emerald-700 px-4 py-3 text-sm font-medium text-white shadow-lg print:hidden"
+          role="status"
+        >
+          {toast}
+        </div>
       ) : null}
     </>
   );

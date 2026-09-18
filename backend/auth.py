@@ -10,13 +10,9 @@ from passlib.context import CryptContext
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from config import ACCESS_TOKEN_EXPIRE_MINUTES, ALGORITHM, SECRET_KEY
 from database import get_session
 from models import User
-
-# Development-only secret. Replace before any production deploy.
-SECRET_KEY = "dev-secret-key-change-me-ai-erp-pos"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")

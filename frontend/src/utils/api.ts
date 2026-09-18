@@ -1,4 +1,7 @@
-export const API_BASE = 'http://localhost:8000';
+export const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(
+  /\/$/,
+  '',
+);
 
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);

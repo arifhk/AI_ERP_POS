@@ -89,6 +89,23 @@ function formatChartDate(value: string) {
   return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
+function sumRefundAmounts(payload: unknown): number {
+  if (!Array.isArray(payload)) {
+    return 0;
+  }
+  return payload.reduce((total, row) => {
+    if (
+      !row ||
+      typeof row !== 'object' ||
+      !('refund_amount' in row) ||
+      typeof row.refund_amount !== 'number'
+    ) {
+      return total;
+    }
+    return total + row.refund_amount;
+  }, 0);
+}
+
 function sumExpenseAmounts(payload: unknown): number {
   if (!Array.isArray(payload)) {
     return 0;
@@ -154,6 +171,7 @@ export default function Dashboard() {
   const router = useRouter();
   const [totalSales, setTotalSales] = useState(0);
   const [totalExpenses, setTotalExpenses] = useState(0);
+  const [totalReturns, setTotalReturns] = useState(0);
   const [activeBranches, setActiveBranches] = useState(0);
   const [newUsers, setNewUsers] = useState(0);
   const [chartData, setChartData] = useState<ChartPoint[]>([]);
@@ -173,12 +191,13 @@ export default function Dashboard() {
 
     async function loadDashboard() {
       try {
-        const [branchesRes, usersRes, statsRes, ordersRes, expensesRes] = await Promise.all([
+        const [branchesRes, usersRes, statsRes, ordersRes, expensesRes, returnsRes] = await Promise.all([
           apiFetch(`${API_BASE}/branches/`),
           apiFetch(`${API_BASE}/users/`),
           apiFetch(`${API_BASE}/dashboard-stats/`),
           apiFetch(withDateQuery(`${API_BASE}/orders/`, range)),
           apiFetch(withDateQuery(`${API_BASE}/expenses/`, range)),
+          apiFetch(withDateQuery(`${API_BASE}/returns/`, range)),
         ]);
 
         if (
@@ -186,7 +205,8 @@ export default function Dashboard() {
           !usersRes.ok ||
           !statsRes.ok ||
           !ordersRes.ok ||
-          !expensesRes.ok
+          !expensesRes.ok ||
+          !returnsRes.ok
         ) {
           throw new Error('Failed to load dashboard data');
         }
@@ -196,6 +216,7 @@ export default function Dashboard() {
         const stats: unknown = await statsRes.json();
         const orders: unknown = await ordersRes.json();
         const expenses: unknown = await expensesRes.json();
+        const returns: unknown = await returnsRes.json();
         const sales = sumOrderTotals(orders);
         const userCount =
           stats &&
@@ -210,6 +231,7 @@ export default function Dashboard() {
         if (!cancelled) {
           setTotalSales(sales);
           setTotalExpenses(sumExpenseAmounts(expenses));
+          setTotalReturns(sumRefundAmounts(returns));
           setActiveBranches(Array.isArray(branches) ? branches.length : 0);
           setNewUsers(userCount);
           setChartData(chartFromOrders(orders));
@@ -232,7 +254,7 @@ export default function Dashboard() {
     };
   }, [router, dateFilter]);
 
-  const cashInHand = totalSales - totalExpenses;
+  const cashInHand = totalSales - totalExpenses - totalReturns;
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -304,7 +326,7 @@ export default function Dashboard() {
               )}
 
               {/* Stats Cards */}
-              <div className="mb-8 grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="mb-8 grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
                 <div className="rounded-lg border border-gray-100 bg-white p-6 shadow-sm">
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0">
@@ -314,6 +336,18 @@ export default function Dashboard() {
                       </p>
                     </div>
                     <div className="shrink-0 rounded-full bg-green-100 p-3 text-2xl text-green-600">💰</div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-amber-100 bg-white p-6 shadow-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-amber-600">Total Returns</p>
+                      <p className="mt-1 truncate text-2xl font-bold text-amber-800 xl:text-3xl">
+                        {formatCurrency(totalReturns)}
+                      </p>
+                    </div>
+                    <div className="shrink-0 rounded-full bg-amber-100 p-3 text-2xl text-amber-700">↩️</div>
                   </div>
                 </div>
 
@@ -340,7 +374,7 @@ export default function Dashboard() {
                       >
                         {formatCurrency(cashInHand)}
                       </p>
-                      <p className="mt-1 text-xs text-emerald-600/80">Net balance (sales − expenses)</p>
+                      <p className="mt-1 text-xs text-emerald-600/80">Net balance (sales − expenses − returns)</p>
                     </div>
                     <div className="shrink-0 rounded-full bg-emerald-100 p-3 text-2xl text-emerald-700">💵</div>
                   </div>

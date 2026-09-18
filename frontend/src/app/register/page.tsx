@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 
-const API_BASE = 'http://localhost:8000';
+import { API_BASE } from '../../utils/api';
 
 function parseApiDetail(payload: unknown, fallback: string) {
   if (payload && typeof payload === 'object' && 'detail' in payload) {
