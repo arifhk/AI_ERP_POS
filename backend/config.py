@@ -26,7 +26,16 @@ DATABASE_URL = _normalize_database_url(
 )
 
 
+PRODUCTION_FRONTEND_ORIGINS = [
+    "https://ai-erp-pos.vercel.app",
+]
+
+
 def cors_origins() -> list[str]:
     raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
-    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
-    return origins or ["http://localhost:3000"]
+    origins = [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
+    merged: list[str] = []
+    for origin in [*PRODUCTION_FRONTEND_ORIGINS, *origins, "http://localhost:3000"]:
+        if origin and origin not in merged:
+            merged.append(origin)
+    return merged

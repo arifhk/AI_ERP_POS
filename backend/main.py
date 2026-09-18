@@ -52,7 +52,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins(),
+    allow_origins=[
+        "https://ai-erp-pos.vercel.app",
+        *cors_origins(),
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
