@@ -13,7 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 
-const API_BASE = 'http://192.168.0.108:8000';
+const API_BASE = 'https://ai-erp-pos.onrender.com';
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -42,7 +42,7 @@ export default function LoginScreen({ navigation }) {
       }
 
       await AsyncStorage.setItem('token', accessToken);
-      navigation.replace('Dashboard');
+      navigation.replace('Main');
     } catch (caught) {
       const status = caught?.response?.status;
       const detail = caught?.response?.data?.detail;
@@ -54,7 +54,7 @@ export default function LoginScreen({ navigation }) {
         setError('Account pending admin approval');
       } else {
         setError(
-          'Cannot reach the API. Confirm FastAPI is running at http://192.168.0.108:8000 with --host 0.0.0.0.',
+          'Cannot reach the API. Confirm the backend is up at https://ai-erp-pos.onrender.com.',
         );
       }
       setSubmitting(false);

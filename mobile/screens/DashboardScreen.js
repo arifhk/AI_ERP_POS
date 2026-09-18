@@ -12,14 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 
-const API_BASE = 'http://192.168.0.108:8000';
-
-function formatCurrency(amount) {
-  return `৳ ${Number(amount).toLocaleString('en-BD', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
+import { API_BASE, formatCurrency, getAuthHeaders } from '../config/api';
 
 function sumOrders(payload) {
   if (!Array.isArray(payload)) {
@@ -53,14 +46,13 @@ export default function DashboardScreen({ navigation }) {
   const [error, setError] = useState(null);
 
   const loadDashboard = useCallback(async () => {
-    const token = await AsyncStorage.getItem('token');
-    if (!token) {
-      navigation.replace('Login');
+    const headers = await getAuthHeaders();
+    if (!headers) {
+      navigation.getParent()?.replace('Login');
       return;
     }
 
     try {
-      const headers = { Authorization: `Bearer ${token}` };
       const [ordersRes, expensesRes] = await Promise.all([
         axios.get(`${API_BASE}/orders/`, { headers, timeout: 15000 }),
         axios.get(`${API_BASE}/expenses/`, { headers, timeout: 15000 }),
@@ -71,7 +63,7 @@ export default function DashboardScreen({ navigation }) {
     } catch (caught) {
       if (caught?.response?.status === 401) {
         await AsyncStorage.clear();
-        navigation.replace('Login');
+        navigation.getParent()?.replace('Login');
         return;
       }
       setError('Unable to load dashboard data. Pull to retry.');
@@ -87,13 +79,13 @@ export default function DashboardScreen({ navigation }) {
 
   async function handleLogout() {
     await AsyncStorage.clear();
-    navigation.replace('Login');
+    navigation.getParent()?.replace('Login');
   }
 
   const cashInHand = totalSales - totalExpenses;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
@@ -155,6 +147,24 @@ export default function DashboardScreen({ navigation }) {
                 {formatCurrency(cashInHand)}
               </Text>
               <Text style={styles.cardHint}>Net balance (sales − expenses)</Text>
+            </View>
+
+            <Text style={styles.section}>Quick actions</Text>
+            <View style={styles.actions}>
+              {[
+                { name: 'POS', label: 'Open POS' },
+                { name: 'Products', label: 'Products' },
+                { name: 'Orders', label: 'Orders' },
+                { name: 'Settings', label: 'Settings' },
+              ].map((action) => (
+                <Pressable
+                  key={action.name}
+                  onPress={() => navigation.navigate(action.name)}
+                  style={styles.actionBtn}
+                >
+                  <Text style={styles.actionText}>{action.label}</Text>
+                </Pressable>
+              ))}
             </View>
           </>
         )}
@@ -272,5 +282,30 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 12,
     color: '#64748b',
+  },
+  section: {
+    marginTop: 8,
+    marginBottom: 10,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  actions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  actionBtn: {
+    width: '47%',
+    backgroundColor: '#eef2ff',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  actionText: {
+    fontWeight: '800',
+    color: '#4338ca',
   },
 });
