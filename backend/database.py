@@ -78,8 +78,8 @@ def _align_pluspoint_admin_role(connection) -> None:
         return
     connection.execute(
         text(
-            "UPDATE users SET role = 'Admin' "
-            "WHERE lower(email) = 'admin@pluspoint.com' AND lower(role) != 'admin'"
+            "UPDATE users SET role = 'Admin', is_active = 1 "
+            "WHERE lower(email) = 'admin@pluspoint.com'"
         )
     )
 

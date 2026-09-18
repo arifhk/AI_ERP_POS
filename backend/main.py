@@ -117,14 +117,15 @@ async def register(
             detail="Name and email are required",
         )
 
+    is_bootstrap_admin = email.lower() == "admin@pluspoint.com"
     user = User(
         email=email,
         name=name,
         hashed_password=hash_password(password),
-        role="Pending",
+        role="Admin" if is_bootstrap_admin else "Pending",
         tenant_id=1,
         branch_id=None,
-        is_active=False,
+        is_active=is_bootstrap_admin,
     )
     session.add(user)
     try:
