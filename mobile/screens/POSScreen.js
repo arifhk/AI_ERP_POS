@@ -167,7 +167,7 @@ export default function POSScreen({ navigation }) {
           data={filtered}
           keyExtractor={(item) => String(item.id)}
           numColumns={2}
-          columnWrapperStyle={styles.row}
+          columnWrapperStyle={filtered.length > 0 ? styles.row : undefined}
           contentContainerStyle={styles.list}
           renderItem={({ item }) => (
             <Pressable onPress={() => addToCart(item)} style={styles.productCard}>
