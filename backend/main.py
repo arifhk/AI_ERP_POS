@@ -145,7 +145,7 @@ async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: AsyncSession = Depends(get_session),
 ) -> Token:
-    statement = select(User).where(User.email == form_data.username.strip())
+    statement = select(User).where(func.lower(User.email) == form_data.username.strip().lower())
     user = (await session.exec(statement)).first()
     stored_hash = user.hashed_password if user is not None else None
     if (
