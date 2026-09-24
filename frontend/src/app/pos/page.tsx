@@ -9,7 +9,7 @@ import {
   formatPrice,
   type Receipt,
 } from '../../components/ThermalReceipt';
-import { Sidebar } from '../../components/Sidebar';
+import { AppShell } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
 import { printWithMode } from '../../utils/print';
 
@@ -40,7 +40,6 @@ export default function PosPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [customerPhone, setCustomerPhone] = useState('');
-  const [navOpen, setNavOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const productsRef = useRef(products);
@@ -427,48 +426,15 @@ export default function PosPage() {
 
   return (
     <>
-    <div className="flex h-screen bg-gray-100 print:hidden">
-      {navOpen ? (
-        <button
-          type="button"
-          aria-label="Close navigation"
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
-          onClick={() => setNavOpen(false)}
-        />
-      ) : null}
-      <div className={`${navOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'} md:static md:z-auto md:flex`}>
-        <Sidebar active="pos" onNavigate={() => setNavOpen(false)} className="h-full" />
-      </div>
-
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white p-3 sm:p-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              aria-label="Open navigation"
-              onClick={() => setNavOpen(true)}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-gray-200 text-gray-700 md:hidden"
-            >
-              <span aria-hidden="true" className="text-lg leading-none">
-                ☰
-              </span>
-            </button>
-            <p className="truncate text-sm font-semibold text-gray-800">Point of Sale</p>
-          </div>
-          <div className="flex shrink-0 items-center space-x-3 sm:space-x-4">
-            <button type="button" className="text-xl text-gray-500 hover:text-gray-700" aria-label="Notifications">
-              🔔
-            </button>
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 font-bold text-white">
-              AH
-            </div>
-          </div>
-        </header>
-
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50 md:flex-row">
+    <AppShell
+      active="pos"
+      className="print:hidden"
+      header={<p className="truncate text-sm font-semibold text-gray-800">Point of Sale</p>}
+      mainClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50 md:flex-row"
+    >
           <section className="flex min-h-0 min-w-0 flex-1 flex-col p-4 md:p-6">
             <div className="mb-4">
-              <h1 className="text-3xl font-semibold text-gray-800">Point of Sale</h1>
+              <h1 className="text-2xl font-semibold text-gray-800 sm:text-3xl">Point of Sale</h1>
               <p className="mt-1 text-sm text-gray-500">Scan a barcode or tap a product to build the order.</p>
             </div>
 
@@ -552,8 +518,6 @@ export default function PosPage() {
           <aside className="hidden h-full w-80 shrink-0 border-l border-gray-200 bg-white md:flex md:flex-col lg:w-96">
             {cartPanel}
           </aside>
-        </main>
-      </div>
 
       <button
         type="button"
@@ -578,7 +542,7 @@ export default function PosPage() {
           </div>
         </div>
       ) : null}
-    </div>
+    </AppShell>
 
     {cameraOpen ? (
       <PosCameraScanner onScan={addByBarcode} onClose={() => setCameraOpen(false)} />

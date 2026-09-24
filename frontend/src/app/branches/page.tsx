@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { Sidebar } from '../../components/Sidebar';
+import { AppShell, PageHeading } from '../../components/AppShell';
 import { API_BASE } from '../../utils/api';
 
 type Branch = {
@@ -124,32 +124,12 @@ export default function BranchesPage() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      <Sidebar active="branches" />
-
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex items-center justify-between p-4 bg-white border-b border-gray-200">
-          <div className="flex items-center">
-            <input
-              type="text"
-              placeholder="Search..."
-              className="w-64 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
-          <div className="flex items-center space-x-4">
-            <button className="text-gray-500 hover:text-gray-700 text-xl">🔔</button>
-            <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold cursor-pointer">
-              AH
-            </div>
-          </div>
-        </header>
-
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-semibold text-gray-800">Branches</h1>
-              <p className="mt-1 text-sm text-gray-500">Manage store locations belonging to each tenant.</p>
-            </div>
+    <>
+    <AppShell active="branches">
+          <PageHeading
+            title="Branches"
+            description="Manage store locations belonging to each tenant."
+            action={
             <button
               type="button"
               onClick={openModal}
@@ -157,7 +137,8 @@ export default function BranchesPage() {
             >
               Add Branch
             </button>
-          </div>
+            }
+          />
 
           {loading ? (
             <div className="flex items-center justify-center rounded-lg border border-gray-100 bg-white p-16 shadow-sm">
@@ -174,7 +155,7 @@ export default function BranchesPage() {
                 </div>
               )}
 
-              <div className="overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
+              <div className="hidden overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm md:block">
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
@@ -220,10 +201,36 @@ export default function BranchesPage() {
                   </table>
                 </div>
               </div>
+              <div className="grid gap-3 md:hidden">
+                {branches.length === 0 ? (
+                  <div className="rounded-lg border border-gray-100 bg-white px-4 py-12 text-center text-sm text-gray-500 shadow-sm">
+                    No branches found. Add a branch to get started.
+                  </div>
+                ) : (
+                  branches.map((branch) => (
+                    <article key={branch.id} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h2 className="truncate text-base font-semibold text-gray-900">{branch.name}</h2>
+                          <p className="mt-1 font-mono text-xs text-gray-500">{branch.code}</p>
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            branch.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                          }`}
+                        >
+                          {branch.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-sm text-gray-600">{branch.address || 'No address'}</p>
+                      <p className="mt-1 text-xs text-gray-500">Tenant {branch.tenant_id}</p>
+                    </article>
+                  ))
+                )}
+              </div>
             </>
           )}
-        </main>
-      </div>
+    </AppShell>
 
       {modalOpen && (
         <div
@@ -232,7 +239,7 @@ export default function BranchesPage() {
           aria-modal="true"
           aria-labelledby="add-branch-title"
         >
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white shadow-xl">
             <div className="border-b border-gray-100 px-6 py-4">
               <h2 id="add-branch-title" className="text-lg font-semibold text-gray-900">
                 Add Branch
@@ -332,6 +339,6 @@ export default function BranchesPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

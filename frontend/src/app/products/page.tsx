@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import dynamic from 'next/dynamic';
-import { Sidebar } from '../../components/Sidebar';
+import { AppShell } from '../../components/AppShell';
 import { LabelPrinter } from '../../components/LabelPrinter';
 import { API_BASE, apiFetch } from '../../utils/api';
 
@@ -125,7 +125,6 @@ export default function ProductsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [navOpen, setNavOpen] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -292,51 +291,19 @@ export default function ProductsPage() {
   const skuValue = form.sku.trim();
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      {navOpen ? (
-        <button
-          type="button"
-          aria-label="Close navigation"
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
-          onClick={() => setNavOpen(false)}
+    <>
+    <AppShell
+      active="products"
+      header={
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search name or SKU..."
+          className="w-full min-w-0 max-w-md rounded-md border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
-      ) : null}
-      <div className={`${navOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'} md:static md:z-auto md:flex`}>
-        <Sidebar active="products" onNavigate={() => setNavOpen(false)} className="h-full" />
-      </div>
-
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white p-3 sm:p-4">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <button
-              type="button"
-              aria-label="Open navigation"
-              onClick={() => setNavOpen(true)}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-gray-200 text-gray-700 md:hidden"
-            >
-              <span aria-hidden="true" className="text-lg leading-none">
-                ☰
-              </span>
-            </button>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search name or SKU..."
-              className="w-full min-w-0 max-w-md rounded-md border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
-          <div className="flex shrink-0 items-center space-x-3 sm:space-x-4">
-            <button type="button" className="text-xl text-gray-500 hover:text-gray-700" aria-label="Notifications">
-              🔔
-            </button>
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 font-bold text-white">
-              AH
-            </div>
-          </div>
-        </header>
-
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-4 sm:p-6">
+      }
+    >
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-2xl font-semibold text-gray-800 sm:text-3xl">Products</h1>
@@ -492,8 +459,7 @@ export default function ProductsPage() {
               </div>
             </>
           )}
-        </main>
-      </div>
+    </AppShell>
 
       {editor ? (
         <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="product-form-title">
@@ -650,6 +616,6 @@ export default function ProductsPage() {
       {barcodeProduct ? (
         <LabelPrinter product={barcodeProduct} onClose={() => setBarcodeProduct(null)} />
       ) : null}
-    </div>
+    </>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Sidebar } from '../../components/Sidebar';
+import { AppShell, PageHeading } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
 import { getStoredRole, isAdminRole } from '../../utils/auth';
 
@@ -90,33 +90,11 @@ export default function CustomersPage() {
   );
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      <Sidebar active="customers" />
-
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex items-center justify-between p-4 bg-white border-b border-gray-200">
-          <div className="flex items-center">
-            <input
-              type="text"
-              placeholder="Search..."
-              className="w-64 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
-          <div className="flex items-center space-x-4">
-            <button className="text-gray-500 hover:text-gray-700 text-xl">🔔</button>
-            <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold cursor-pointer">
-              AH
-            </div>
-          </div>
-        </header>
-
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
-          <div className="mb-6">
-            <h1 className="text-3xl font-semibold text-gray-800">Customers</h1>
-            <p className="mt-1 text-sm text-gray-500">
-              Loyal customers from POS checkouts, ranked by total amount spent.
-            </p>
-          </div>
+    <AppShell active="customers">
+          <PageHeading
+            title="Customers"
+            description="Loyal customers from POS checkouts, ranked by total amount spent."
+          />
 
           {loading ? (
             <div className="flex items-center justify-center rounded-lg border border-gray-100 bg-white p-16 shadow-sm">
@@ -133,7 +111,7 @@ export default function CustomersPage() {
                 </div>
               )}
 
-              <div className="overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
+              <div className="hidden overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm md:block">
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
@@ -184,10 +162,25 @@ export default function CustomersPage() {
                   </table>
                 </div>
               </div>
+              <div className="grid gap-3 md:hidden">
+                {ranked.length === 0 ? (
+                  <div className="rounded-lg border border-gray-100 bg-white px-4 py-12 text-center text-sm text-gray-500 shadow-sm">
+                    No customer phone numbers recorded at the POS yet.
+                  </div>
+                ) : (
+                  ranked.map((customer) => (
+                    <article key={customer.customer_phone} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+                      <h2 className="text-base font-semibold text-gray-900">{customer.customer_phone}</h2>
+                      <div className="mt-3 flex items-center justify-between text-sm">
+                        <p className="text-gray-500">{customer.total_visits} visits</p>
+                        <p className="font-semibold text-gray-900">{formatCurrency(customer.total_spent)}</p>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
             </>
           )}
-        </main>
-      </div>
-    </div>
+    </AppShell>
   );
 }

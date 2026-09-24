@@ -18,10 +18,12 @@ const NAV_LINKS = [
   { href: '/settings', label: 'Settings', key: 'settings' },
 ] as const;
 
+export type AppSection = (typeof NAV_LINKS)[number]['key'];
+
 const CASHIER_KEYS = new Set(['pos', 'orders', 'expenses', 'purchases']);
 
 type SidebarProps = {
-  active: (typeof NAV_LINKS)[number]['key'];
+  active: AppSection;
   className?: string;
   onNavigate?: () => void;
 };
