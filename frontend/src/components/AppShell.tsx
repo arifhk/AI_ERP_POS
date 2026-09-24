@@ -21,31 +21,38 @@ export function AppShell({
   const [navOpen, setNavOpen] = useState(false);
 
   return (
-    <div className={`flex h-dvh bg-gray-100 ${className}`}>
-      {navOpen ? (
-        <button
-          type="button"
-          aria-label="Close navigation"
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
-          onClick={() => setNavOpen(false)}
-        />
-      ) : null}
-      <div className={`${navOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'} md:static md:z-auto md:flex`}>
-        <Sidebar active={active} onNavigate={() => setNavOpen(false)} className="h-full" />
+    <div className={`flex h-dvh w-full bg-gray-100 ${className}`}>
+      <div className="hidden shrink-0 md:flex">
+        <Sidebar active={active} className="h-full" />
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white p-3 sm:p-4">
+      {navOpen ? (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <button
+            type="button"
+            aria-label="Close navigation"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setNavOpen(false)}
+          />
+          <div className="absolute inset-y-0 left-0 flex h-full shadow-xl">
+            <Sidebar active={active} onNavigate={() => setNavOpen(false)} className="h-full" />
+          </div>
+        </div>
+      ) : null}
+
+      <div className="flex w-full min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex w-full items-center justify-between gap-3 border-b border-gray-200 bg-white p-3 sm:p-4">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <button
               type="button"
               aria-label="Open navigation"
+              aria-expanded={navOpen}
               onClick={() => setNavOpen(true)}
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-gray-200 text-gray-700 md:hidden"
             >
-              <span aria-hidden="true" className="text-lg leading-none">
-                ☰
-              </span>
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
             </button>
             {header ? <div className="min-w-0 flex-1">{header}</div> : null}
           </div>
