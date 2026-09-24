@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { LaserInvoice } from '../../components/LaserInvoice';
 import {
   ThermalReceipt,
   formatPrice,
@@ -12,6 +13,8 @@ import {
 import { Sidebar } from '../../components/Sidebar';
 import { API_BASE, apiFetch } from '../../utils/api';
 import { printWithMode } from '../../utils/print';
+
+type PrintLayout = 'thermal' | 'laser';
 
 type OrderItem = {
   id: number;
@@ -30,6 +33,130 @@ type Order = {
   customer_phone?: string | null;
   items: OrderItem[];
 };
+
+function OrderActions({
+  onDetails,
+  onReprint,
+  onReturn,
+  returnDisabled,
+}: {
+  onDetails: () => void;
+  onReprint: () => void;
+  onReturn: () => void;
+  returnDisabled: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      <button
+        type="button"
+        onClick={onDetails}
+        className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+      >
+        View Details
+      </button>
+      <button
+        type="button"
+        onClick={onReprint}
+        className="rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+      >
+        Reprint Receipt
+      </button>
+      <button
+        type="button"
+        onClick={onReturn}
+        disabled={returnDisabled}
+        className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Process Return
+      </button>
+    </div>
+  );
+}
+
+function OrderDetails({
+  order,
+  onClose,
+  onReprint,
+}: {
+  order: Order;
+  onClose: () => void;
+  onReprint: () => void;
+}) {
+  const receipt = orderToReceipt(order);
+
+  return (
+    <div className="fixed inset-0 z-50 print:hidden" role="dialog" aria-modal="true" aria-labelledby="order-details-title">
+      <button type="button" aria-label="Close order details" className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
+          <div>
+            <h2 id="order-details-title" className="text-lg font-semibold text-gray-900">
+              Order #{order.id}
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              {formatReceiptDate(order.created_at)}
+              {order.customer_phone ? ` · ${order.customer_phone}` : ' · Walk-in'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md px-2 py-1 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+          >
+            Close
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <ul className="divide-y divide-gray-100 rounded-lg border border-gray-100">
+            {receipt.items.map((item, index) => (
+              <li key={`${item.name}-${index}`} className="flex items-start justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900">{item.name}</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {item.quantity} × {formatPrice(item.price)}
+                  </p>
+                </div>
+                <p className="shrink-0 text-sm font-semibold text-gray-900">
+                  {formatPrice(item.price * item.quantity)}
+                </p>
+              </li>
+            ))}
+          </ul>
+          <dl className="mt-4 space-y-2 text-sm">
+            <div className="flex justify-between text-gray-600">
+              <dt>Subtotal</dt>
+              <dd>{formatPrice(receipt.subtotal)}</dd>
+            </div>
+            <div className="flex justify-between text-gray-600">
+              <dt>VAT (5%)</dt>
+              <dd>{formatPrice(receipt.vat)}</dd>
+            </div>
+            <div className="flex justify-between border-t border-gray-100 pt-2 text-base font-semibold text-gray-900">
+              <dt>Total</dt>
+              <dd>{formatPrice(receipt.grandTotal)}</dd>
+            </div>
+          </dl>
+        </div>
+        <div className="flex justify-end gap-3 border-t border-gray-100 px-5 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={onReprint}
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+          >
+            Reprint Receipt
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function orderToReceipt(order: Order): Receipt {
   const items = (order.items ?? []).map((item) => ({
@@ -60,6 +187,10 @@ export default function OrdersPage() {
   const [returnError, setReturnError] = useState<string | null>(null);
   const [returnSubmitting, setReturnSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [navOpen, setNavOpen] = useState(false);
+  const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+  const [printLayout, setPrintLayout] = useState<PrintLayout>('thermal');
 
   async function loadOrders() {
     const response = await apiFetch(`${API_BASE}/orders/`);
@@ -92,6 +223,40 @@ export default function OrdersPage() {
       cancelled = true;
     };
   }, []);
+
+  const filteredOrders = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) {
+      return orders;
+    }
+    return orders.filter((order) => {
+      const itemNames = (order.items ?? []).map((item) => item.name ?? '').join(' ');
+      const haystack = `${order.id} ${order.customer_phone ?? ''} ${itemNames}`.toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [orders, query]);
+
+  useEffect(() => {
+    if (!detailOrder && !receipt && !returnOrder) {
+      return;
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || returnSubmitting) {
+        return;
+      }
+      if (receipt) {
+        setReceipt(null);
+        return;
+      }
+      if (returnOrder) {
+        setReturnOrder(null);
+        return;
+      }
+      setDetailOrder(null);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [detailOrder, receipt, returnOrder, returnSubmitting]);
 
   useEffect(() => {
     if (!toast) {
@@ -178,6 +343,11 @@ export default function OrdersPage() {
     }
   }
 
+  function openReprint(order: Order, layout: PrintLayout = 'thermal') {
+    setPrintLayout(layout);
+    setReceipt(orderToReceipt(order));
+  }
+
   function csvCell(value: string | number) {
     const text = String(value);
     if (/[",\n\r]/.test(text)) {
@@ -205,38 +375,67 @@ export default function OrdersPage() {
     URL.revokeObjectURL(url);
   }
 
+  const emptyMessage =
+    orders.length === 0 ? 'No sales recorded yet.' : 'No orders match your search.';
+
   return (
     <>
       <div className="flex h-screen bg-gray-100 print:hidden">
-        <Sidebar active="orders" />
+        {navOpen ? (
+          <button
+            type="button"
+            aria-label="Close navigation"
+            className="fixed inset-0 z-30 bg-black/40 md:hidden"
+            onClick={() => setNavOpen(false)}
+          />
+        ) : null}
+        <div className={`${navOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'} md:static md:z-auto md:flex`}>
+          <Sidebar active="orders" onNavigate={() => setNavOpen(false)} className="h-full" />
+        </div>
 
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <header className="flex items-center justify-between p-4 bg-white border-b border-gray-200">
-            <div className="flex items-center">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white p-3 sm:p-4">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <button
+                type="button"
+                aria-label="Open navigation"
+                onClick={() => setNavOpen(true)}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-gray-200 text-gray-700 md:hidden"
+              >
+                <span aria-hidden="true" className="text-lg leading-none">
+                  ☰
+                </span>
+              </button>
               <input
-                type="text"
-                placeholder="Search..."
-                className="w-64 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search order, phone, or item..."
+                className="w-full min-w-0 max-w-md rounded-md border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
-            <div className="flex items-center space-x-4">
-              <button className="text-gray-500 hover:text-gray-700 text-xl">🔔</button>
-              <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold cursor-pointer">
+            <div className="flex shrink-0 items-center space-x-3 sm:space-x-4">
+              <button type="button" className="text-xl text-gray-500 hover:text-gray-700" aria-label="Notifications">
+                🔔
+              </button>
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 font-bold text-white">
                 AH
               </div>
             </div>
           </header>
 
-          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
-            <div className="mb-6 flex items-center justify-between gap-4">
+          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-4 sm:p-6">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h1 className="text-3xl font-semibold text-gray-800">Sales History</h1>
-                <p className="mt-1 text-sm text-gray-500">Review past POS orders and reprint thermal receipts.</p>
+                <h1 className="text-2xl font-semibold text-gray-800 sm:text-3xl">Sales History</h1>
+                <p className="mt-1 text-sm text-gray-500">
+                  Completed POS transactions, with thermal and A4 reprints.
+                </p>
               </div>
               <button
                 type="button"
-                onClick={() => exportOrdersToCsv(orders)}
-                disabled={loading || orders.length === 0}
+                onClick={() => exportOrdersToCsv(filteredOrders)}
+                disabled={loading || filteredOrders.length === 0}
                 className="rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-emerald-300"
               >
                 Export to CSV
@@ -258,61 +457,99 @@ export default function OrdersPage() {
                   </div>
                 )}
 
-                <div className="overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
+                <div className="hidden overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm md:block">
                   <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-200">
                       <thead className="bg-gray-50">
                         <tr>
                           <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Order ID</th>
                           <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Date & Time</th>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Total Amount</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Items</th>
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Total</th>
                           <th scope="col" className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 bg-white">
-                        {orders.length === 0 ? (
+                        {filteredOrders.length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="px-6 py-12 text-center text-sm text-gray-500">
-                              No sales recorded yet.
+                            <td colSpan={5} className="px-6 py-12 text-center text-sm text-gray-500">
+                              {emptyMessage}
                             </td>
                           </tr>
                         ) : (
-                          orders.map((order) => (
-                            <tr key={order.id} className="hover:bg-gray-50">
-                              <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
-                                #{order.id}
-                              </td>
-                              <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
-                                {formatReceiptDate(order.created_at)}
-                              </td>
-                              <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-900">
-                                {formatPrice(order.total_amount)}
-                              </td>
-                              <td className="whitespace-nowrap px-6 py-4 text-right">
-                                <div className="inline-flex items-center justify-end gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setReceipt(orderToReceipt(order))}
-                                    className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
-                                  >
-                                    View/Print
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => openReturnModal(order)}
-                                    disabled={!order.items?.length}
-                                    className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                  >
-                                    Process Return
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
+                          filteredOrders.map((order) => {
+                            const summary = orderToReceipt(order);
+                            const units = summary.items.reduce((sum, item) => sum + item.quantity, 0);
+                            return (
+                              <tr key={order.id} className="hover:bg-gray-50">
+                                <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                                  #{order.id}
+                                </td>
+                                <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                                  {formatReceiptDate(order.created_at)}
+                                </td>
+                                <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                                  {units} {units === 1 ? 'unit' : 'units'}
+                                </td>
+                                <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-900">
+                                  {formatPrice(summary.grandTotal)}
+                                </td>
+                                <td className="whitespace-nowrap px-6 py-4 text-right">
+                                  <OrderActions
+                                    onDetails={() => setDetailOrder(order)}
+                                    onReprint={() => openReprint(order)}
+                                    onReturn={() => openReturnModal(order)}
+                                    returnDisabled={!order.items?.length}
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
                   </div>
+                </div>
+
+                <div className="grid gap-3 md:hidden">
+                  {filteredOrders.length === 0 ? (
+                    <div className="rounded-lg border border-gray-100 bg-white px-4 py-12 text-center text-sm text-gray-500 shadow-sm">
+                      {emptyMessage}
+                    </div>
+                  ) : (
+                    filteredOrders.map((order) => {
+                      const summary = orderToReceipt(order);
+                      const units = summary.items.reduce((sum, item) => sum + item.quantity, 0);
+                      return (
+                        <article key={order.id} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h2 className="text-base font-semibold text-gray-900">Order #{order.id}</h2>
+                              <p className="mt-1 text-xs text-gray-500">{formatReceiptDate(order.created_at)}</p>
+                            </div>
+                            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                              Completed
+                            </span>
+                          </div>
+                          <div className="mt-3 flex items-center justify-between gap-3">
+                            <p className="text-sm text-gray-600">
+                              {units} {units === 1 ? 'unit' : 'units'}
+                              {order.customer_phone ? ` · ${order.customer_phone}` : ''}
+                            </p>
+                            <p className="text-sm font-semibold text-gray-900">{formatPrice(summary.grandTotal)}</p>
+                          </div>
+                          <div className="mt-3">
+                            <OrderActions
+                              onDetails={() => setDetailOrder(order)}
+                              onReprint={() => openReprint(order)}
+                              onReturn={() => openReturnModal(order)}
+                              returnDisabled={!order.items?.length}
+                            />
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
                 </div>
               </>
             )}
@@ -320,45 +557,104 @@ export default function OrdersPage() {
         </div>
       </div>
 
+      {detailOrder ? (
+        <OrderDetails
+          order={detailOrder}
+          onClose={() => setDetailOrder(null)}
+          onReprint={() => openReprint(detailOrder)}
+        />
+      ) : null}
+
       {receipt ? (
         <>
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 print:hidden"
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 print:hidden"
             role="dialog"
             aria-modal="true"
             aria-labelledby="history-receipt-title"
           >
-            <div className="flex flex-col items-center rounded-xl bg-neutral-100 p-5 shadow-2xl">
-              <p id="history-receipt-title" className="sr-only">
-                Order receipt
-              </p>
-              <div className="rounded-sm border border-neutral-300 bg-white shadow-sm">
-                <ThermalReceipt receipt={receipt} />
-              </div>
-              <div className="mt-4 flex w-[80mm] max-w-[80mm] gap-2">
-                <button
-                  type="button"
-                  onClick={() => printWithMode('receipt')}
-                  className="flex-1 rounded-md border border-gray-800 bg-white px-3 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50"
-                >
-                  Print Receipt
-                </button>
+            <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+                <div>
+                  <h2 id="history-receipt-title" className="text-lg font-semibold text-gray-900">
+                    Reprint receipt
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Order #{receipt.orderId}. Choose the thermal or laser layout.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setReceipt(null)}
-                  className="flex-1 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                  className="rounded-md px-2 py-1 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-800"
                 >
                   Close
                 </button>
               </div>
+              <div className="flex gap-2 border-b border-gray-100 px-5 py-3">
+                <button
+                  type="button"
+                  onClick={() => setPrintLayout('thermal')}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+                    printLayout === 'thermal'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Thermal (80mm)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintLayout('laser')}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+                    printLayout === 'laser'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Laser (A4)
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto bg-neutral-100 p-4">
+                <div className="mx-auto w-max max-w-full rounded-sm border border-neutral-300 bg-white shadow-sm">
+                  {printLayout === 'thermal' ? (
+                    <ThermalReceipt receipt={receipt} />
+                  ) : (
+                    <LaserInvoice receipt={receipt} />
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 border-t border-gray-100 px-5 py-4">
+                <button
+                  type="button"
+                  onClick={() => setReceipt(null)}
+                  className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => printWithMode(printLayout === 'thermal' ? 'receipt' : 'a4')}
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                >
+                  {printLayout === 'thermal' ? 'Print 80mm receipt' : 'Print A4 invoice'}
+                </button>
+              </div>
             </div>
           </div>
-          {createPortal(
-            <div id="thermal-receipt-host" className="hidden print:block">
-              <ThermalReceipt receipt={receipt} printRoot />
-            </div>,
-            document.body,
-          )}
+          {printLayout === 'thermal'
+            ? createPortal(
+                <div id="thermal-receipt-host" className="hidden print:block">
+                  <ThermalReceipt receipt={receipt} printRoot />
+                </div>,
+                document.body,
+              )
+            : createPortal(
+                <div id="laser-invoice-host" className="hidden print:block">
+                  <LaserInvoice receipt={receipt} printRoot />
+                </div>,
+                document.body,
+              )}
         </>
       ) : null}
 

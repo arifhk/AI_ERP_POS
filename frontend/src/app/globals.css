@@ -43,12 +43,13 @@ body {
     print-color-adjust: exact;
   }
 
-  body > *:not(#thermal-receipt-host):not(#barcode-label-host) {
+  body > *:not(#thermal-receipt-host):not(#barcode-label-host):not(#laser-invoice-host) {
     display: none !important;
   }
 
   #thermal-receipt-host,
-  #barcode-label-host {
+  #barcode-label-host,
+  #laser-invoice-host {
     display: block !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -61,7 +62,9 @@ body {
     max-width: 80mm !important;
   }
 
-  #barcode-label-host {
+  #barcode-label-host,
+  #laser-invoice-host,
+  #laser-invoice {
     width: auto !important;
     height: auto !important;
     max-width: none !important;

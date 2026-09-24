@@ -1,4 +1,4 @@
-export type PrintMode = 'receipt' | 'label';
+export type PrintMode = 'receipt' | 'label' | 'a4';
 
 type LabelPrintOptions = {
   pageWidth: string;
@@ -15,6 +15,8 @@ export function printWithMode(mode: PrintMode, options?: LabelPrintOptions) {
     const width = options?.pageWidth ?? '50.8mm';
     const height = options?.pageHeight ?? '25.4mm';
     style.textContent = `@page { size: ${width} ${height}; margin: 0; }`;
+  } else if (mode === 'a4') {
+    style.textContent = '@page { size: A4; margin: 12mm; }';
   } else {
     style.textContent = '@page { size: 80mm auto; margin: 0; }';
   }

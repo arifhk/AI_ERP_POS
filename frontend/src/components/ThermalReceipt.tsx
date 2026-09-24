@@ -1,5 +1,5 @@
-const COMPANY_NAME = 'Plus Point Pvt. Ltd.';
-const BRANCH_NAME = 'Joydebpur Branch';
+export const COMPANY_NAME = 'Plus Point Pvt. Ltd.';
+export const BRANCH_NAME = 'Joydebpur Branch';
 
 export const VAT_RATE = 0.05;
 
