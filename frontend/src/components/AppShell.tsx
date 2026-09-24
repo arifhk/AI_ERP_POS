@@ -35,7 +35,7 @@ export function AppShell({
             onClick={() => setNavOpen(false)}
           />
           <div className="absolute inset-y-0 left-0 flex h-full shadow-xl">
-            <Sidebar active={active} onNavigate={() => setNavOpen(false)} className="h-full" />
+            <Sidebar active={active} onNavigate={() => setNavOpen(false)} className="h-full max-md:flex!" />
           </div>
         </div>
       ) : null}

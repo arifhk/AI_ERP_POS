@@ -35,7 +35,7 @@ export function Sidebar({ active, className = '', onNavigate }: SidebarProps) {
     : NAV_LINKS;
 
   return (
-    <aside className={`flex w-64 shrink-0 flex-col bg-gray-900 text-white ${className}`}>
+    <aside className={`hidden w-64 shrink-0 bg-gray-900 text-white md:flex md:flex-col ${className}`}>
       <div className="p-6 text-2xl font-bold border-b border-gray-800">
         AI ERP & POS
       </div>
