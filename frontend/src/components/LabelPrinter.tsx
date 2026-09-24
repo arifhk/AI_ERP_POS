@@ -13,7 +13,7 @@ export type LabelProduct = {
   price: number;
 };
 
-type LabelTemplateId = '1.5x1-1up' | '2x1-2up' | '1.25x0.75-3up' | 'custom';
+type LabelTemplateId = '2x1-1up' | '1.5x1-1up' | '2x1-2up' | '1.25x0.75-3up' | 'custom';
 
 type LabelTemplate = {
   id: LabelTemplateId;
@@ -27,6 +27,13 @@ const LABEL_GAP_MM = 1;
 const MAX_COPIES = 48;
 
 const TEMPLATES: LabelTemplate[] = [
+  {
+    id: '2x1-1up',
+    label: '2 x 1 inch retail sticker',
+    widthMm: 50.8,
+    heightMm: 25.4,
+    columns: 1,
+  },
   {
     id: '1.5x1-1up',
     label: '1.5 x 1 inch (1-up)',
@@ -82,30 +89,36 @@ function BarcodeLabelCard({
   heightMm: number;
 }) {
   const value = barcode.trim() || '0';
-  const barHeight = Math.max(14, Math.min(heightMm * 0.85, 42));
-  const barWidth = Math.max(0.7, Math.min(widthMm / 42, 1.5));
-  const fontSize = Math.max(7, Math.min(widthMm * 0.22, 11));
+  const textBandPx = 22;
+  const availableHeightPx = Math.max(18, heightMm * 3.78 - textBandPx);
+  const barHeight = Math.max(16, Math.min(availableHeightPx * 0.72, 48));
+  const modules = Math.max(48, value.length * 11 + 35);
+  const availableWidthPx = Math.max(40, (widthMm - 1.4) * 3.78);
+  const barWidth = Math.max(0.55, Math.min(1.35, availableWidthPx / modules));
+  const fontSize = Math.max(7, Math.min(widthMm * 0.18, 10));
 
   return (
     <div
-      className="barcode-label-card box-border flex flex-col items-center justify-center overflow-hidden bg-white text-black"
+      className="barcode-label-card box-border flex flex-col items-center justify-between overflow-hidden bg-white text-black"
       style={{
         width: `${widthMm}mm`,
         height: `${heightMm}mm`,
-        padding: '0.6mm',
+        padding: '0.8mm 1mm',
       }}
     >
-      <Barcode
-        value={value}
-        format="CODE128"
-        width={barWidth}
-        height={barHeight}
-        fontSize={fontSize}
-        margin={0}
-        displayValue
-        background="#ffffff"
-        lineColor="#000000"
-      />
+      <div className="flex w-full flex-1 items-center justify-center overflow-hidden [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-full">
+        <Barcode
+          value={value}
+          format="CODE128"
+          width={barWidth}
+          height={barHeight}
+          fontSize={fontSize}
+          margin={0}
+          displayValue
+          background="#ffffff"
+          lineColor="#000000"
+        />
+      </div>
       <p
         className="w-full truncate text-center font-bold leading-tight"
         style={{ fontSize: `${Math.max(6, fontSize - 1)}px` }}
@@ -125,7 +138,7 @@ export function LabelPrinter({ product, onClose }: LabelPrinterProps) {
   const [labelWidth, setLabelWidth] = useState(defaultTemplate.widthMm);
   const [labelHeight, setLabelHeight] = useState(defaultTemplate.heightMm);
   const [columns, setColumns] = useState(defaultTemplate.columns);
-  const [printCount, setPrintCount] = useState(defaultTemplate.columns * 2);
+  const [printCount, setPrintCount] = useState(1);
 
   const barcodeValue = product.barcode.trim() || String(product.id);
   const copies = Math.min(MAX_COPIES, Math.max(1, printCount));

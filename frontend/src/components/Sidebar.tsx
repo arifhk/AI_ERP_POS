@@ -22,16 +22,18 @@ const CASHIER_KEYS = new Set(['pos', 'orders', 'expenses', 'purchases']);
 
 type SidebarProps = {
   active: (typeof NAV_LINKS)[number]['key'];
+  className?: string;
+  onNavigate?: () => void;
 };
 
-export function Sidebar({ active }: SidebarProps) {
+export function Sidebar({ active, className = '', onNavigate }: SidebarProps) {
   const [isAdmin] = useState(() => isAdminRole(getStoredRole()));
   const links = !isAdmin
     ? NAV_LINKS.filter((link) => CASHIER_KEYS.has(link.key))
     : NAV_LINKS;
 
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col">
+    <aside className={`flex w-64 shrink-0 flex-col bg-gray-900 text-white ${className}`}>
       <div className="p-6 text-2xl font-bold border-b border-gray-800">
         AI ERP & POS
       </div>
@@ -40,6 +42,7 @@ export function Sidebar({ active }: SidebarProps) {
           <Link
             key={link.key}
             href={link.href}
+            onClick={onNavigate}
             className={`block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 ${
               active === link.key ? 'bg-gray-800' : ''
             }`}
