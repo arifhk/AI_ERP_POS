@@ -10,7 +10,7 @@ import {
   receiptTotals,
   type Receipt,
 } from '../../components/ThermalReceipt';
-import { Sidebar } from '../../components/Sidebar';
+import { AppShell } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
 import { printWithMode } from '../../utils/print';
 
@@ -188,7 +188,6 @@ export default function OrdersPage() {
   const [returnSubmitting, setReturnSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [navOpen, setNavOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [printLayout, setPrintLayout] = useState<PrintLayout>('thermal');
 
@@ -380,51 +379,19 @@ export default function OrdersPage() {
 
   return (
     <>
-      <div className="flex h-screen bg-gray-100 print:hidden">
-        {navOpen ? (
-          <button
-            type="button"
-            aria-label="Close navigation"
-            className="fixed inset-0 z-30 bg-black/40 md:hidden"
-            onClick={() => setNavOpen(false)}
+      <AppShell
+        active="orders"
+        className="print:hidden"
+        header={
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search order, phone, or item..."
+            className="w-full min-w-0 max-w-md rounded-md border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
-        ) : null}
-        <div className={`${navOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden'} md:static md:z-auto md:flex`}>
-          <Sidebar active="orders" onNavigate={() => setNavOpen(false)} className="h-full" />
-        </div>
-
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white p-3 sm:p-4">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <button
-                type="button"
-                aria-label="Open navigation"
-                onClick={() => setNavOpen(true)}
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-gray-200 text-gray-700 md:hidden"
-              >
-                <span aria-hidden="true" className="text-lg leading-none">
-                  ☰
-                </span>
-              </button>
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search order, phone, or item..."
-                className="w-full min-w-0 max-w-md rounded-md border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div className="flex shrink-0 items-center space-x-3 sm:space-x-4">
-              <button type="button" className="text-xl text-gray-500 hover:text-gray-700" aria-label="Notifications">
-                🔔
-              </button>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 font-bold text-white">
-                AH
-              </div>
-            </div>
-          </header>
-
-          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-4 sm:p-6">
+        }
+      >
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h1 className="text-2xl font-semibold text-gray-800 sm:text-3xl">Sales History</h1>
@@ -553,9 +520,7 @@ export default function OrdersPage() {
                 </div>
               </>
             )}
-          </main>
-        </div>
-      </div>
+      </AppShell>
 
       {detailOrder ? (
         <OrderDetails
@@ -665,7 +630,7 @@ export default function OrdersPage() {
           aria-modal="true"
           aria-labelledby="process-return-title"
         >
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white shadow-xl">
             <div className="border-b border-gray-100 px-6 py-4">
               <h2 id="process-return-title" className="text-lg font-semibold text-gray-900">
                 Process Return
