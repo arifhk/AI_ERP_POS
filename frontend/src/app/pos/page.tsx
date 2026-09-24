@@ -440,7 +440,7 @@ export default function PosPage() {
 
             <form
               onSubmit={(event) => event.preventDefault()}
-              className="mb-4 flex flex-col gap-2 sm:flex-row"
+              className="mb-4 flex flex-row items-stretch gap-2"
             >
               <input
                 autoFocus
@@ -449,12 +449,12 @@ export default function PosPage() {
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={handleSearchKeyDown}
                 placeholder="Search by barcode or product name..."
-                className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
               <button
                 type="button"
                 onClick={() => setCameraOpen(true)}
-                className="shrink-0 rounded-lg bg-indigo-600 px-4 py-3 text-sm font-semibold text-white hover:bg-indigo-500"
+                className="shrink-0 rounded-lg bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500"
               >
                 Scan with Camera
               </button>
