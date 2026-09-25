@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Camera } from 'lucide-react';
 import { PosCameraScanner } from '../../components/PosCameraScanner';
 import {
   ThermalReceipt,
@@ -443,7 +442,6 @@ export default function PosPage() {
               onSubmit={(event) => event.preventDefault()}
               className="mb-4 flex flex-row items-stretch gap-2"
             >
-              <div className="flex gap-2 w-full">
               <input
                 autoFocus
                 type="text"
@@ -453,10 +451,6 @@ export default function PosPage() {
                 placeholder="Search by barcode or product name..."
                 className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
-              <button type="button" onClick={() => setCameraOpen(true)} className="p-3 bg-blue-600 text-white rounded-md">
-                <Camera />
-              </button>
-              </div>
               <button
                 type="button"
                 onClick={() => setCameraOpen(true)}
