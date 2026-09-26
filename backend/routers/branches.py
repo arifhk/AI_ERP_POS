@@ -6,8 +6,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from auth import get_current_user
 from database import get_session
-from models import Branch, Tenant
+from models import Branch, Tenant, User
+from rbac import restrict
 
 router = APIRouter()
 
@@ -98,10 +100,9 @@ async def list_branches(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[Branch]:
-    statement = select(Branch)
-    if tenant_id is not None:
-        statement = statement.where(Branch.tenant_id == tenant_id)
+    statement = restrict(select(Branch), Branch.tenant_id, current_user, tenant_id)
     result = await session.exec(statement.offset(skip).limit(limit).order_by(Branch.id))
     return list(result.all())
 

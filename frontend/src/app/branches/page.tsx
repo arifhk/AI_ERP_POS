@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { AppShell, PageHeading } from '../../components/AppShell';
-import { API_BASE } from '../../utils/api';
+import { API_BASE, apiFetch } from '../../utils/api';
 
 type Branch = {
   id: number;
@@ -38,7 +38,7 @@ export default function BranchesPage() {
   const [form, setForm] = useState(emptyForm);
 
   async function loadBranches() {
-    const response = await fetch(`${API_BASE}/branches/`);
+    const response = await apiFetch(`${API_BASE}/branches/`);
     if (!response.ok) {
       throw new Error('Failed to load branches');
     }
@@ -90,7 +90,7 @@ export default function BranchesPage() {
     setFormError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/branches/`, {
+      const response = await apiFetch(`${API_BASE}/branches/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

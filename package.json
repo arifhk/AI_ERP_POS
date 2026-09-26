@@ -1,6 +1,10 @@
 {
   "dependencies": {
+    "papaparse": "^5.7.0",
     "react-barcode": "^1.6.1",
     "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/papaparse": "^5.5.2"
   }
 }

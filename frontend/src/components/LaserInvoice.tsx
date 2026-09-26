@@ -18,6 +18,7 @@ export function LaserInvoice({
   return (
     <article
       id={printRoot ? 'laser-invoice' : undefined}
+      data-paper
       className="box-border w-[210mm] max-w-full bg-white px-10 py-8 text-[13px] leading-normal text-black"
     >
       <header className="flex items-start justify-between gap-6 border-b border-black pb-4">

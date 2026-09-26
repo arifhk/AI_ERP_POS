@@ -1,242 +1,89 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import { AppShell } from '../components/AppShell';
+import { ActivityList, CategoryDonut, KpiValue, ProductsBarChart, RevenueAreaChart } from '../components/dashboard/charts';
+import { DashboardBoard, type WidgetId } from '../components/dashboard/DashboardBoard';
+import {
+  DATE_FILTERS,
+  buildDashboard,
+  formatCurrency,
+  formatWhen,
+  type ApprovalRow,
+  type AuditRow,
+  type CustomerRow,
+  type DateFilter,
+  type OrderRow,
+  type ReturnRow,
+} from '../components/dashboard/metrics';
+import { DataTable, WidgetShell, type DragHandleProps } from '../components/dashboard/WidgetShell';
 import { API_BASE, apiFetch } from '../utils/api';
-import { getStoredRole } from '../utils/auth';
+import { getStoredRole, isAdminRole } from '../utils/auth';
 
-type ChartPoint = {
-  date: string;
-  total: number;
+type ProductRow = {
+  id: number;
+  category?: string;
 };
-
-type DateFilter = 'today' | 'week' | 'all';
-
-const DATE_FILTERS: { id: DateFilter; label: string }[] = [
-  { id: 'today', label: 'Today' },
-  { id: 'week', label: 'This Week' },
-  { id: 'all', label: 'All Time' },
-];
-
-function startOfLocalDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function endOfLocalDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
-}
-
-function getDateRange(filter: DateFilter): { start_date: string; end_date: string } | null {
-  if (filter === 'all') {
-    return null;
-  }
-
-  const now = new Date();
-  const end = endOfLocalDay(now);
-
-  if (filter === 'today') {
-    return {
-      start_date: startOfLocalDay(now).toISOString(),
-      end_date: end.toISOString(),
-    };
-  }
-
-  const weekday = now.getDay();
-  const daysFromMonday = weekday === 0 ? 6 : weekday - 1;
-  const monday = startOfLocalDay(
-    new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysFromMonday),
-  );
-
-  return {
-    start_date: monday.toISOString(),
-    end_date: end.toISOString(),
-  };
-}
-
-function withDateQuery(url: string, range: { start_date: string; end_date: string } | null) {
-  if (!range) {
-    return url;
-  }
-  const params = new URLSearchParams({
-    start_date: range.start_date,
-    end_date: range.end_date,
-  });
-  return `${url}?${params.toString()}`;
-}
-
-function formatCurrency(amount: number) {
-  return `৳ ${amount.toLocaleString('en-BD', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function formatChartDate(value: string) {
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-}
-
-function sumRefundAmounts(payload: unknown): number {
-  if (!Array.isArray(payload)) {
-    return 0;
-  }
-  return payload.reduce((total, row) => {
-    if (
-      !row ||
-      typeof row !== 'object' ||
-      !('refund_amount' in row) ||
-      typeof row.refund_amount !== 'number'
-    ) {
-      return total;
-    }
-    return total + row.refund_amount;
-  }, 0);
-}
-
-function sumExpenseAmounts(payload: unknown): number {
-  if (!Array.isArray(payload)) {
-    return 0;
-  }
-  return payload.reduce((total, row) => {
-    if (!row || typeof row !== 'object' || !('amount' in row) || typeof row.amount !== 'number') {
-      return total;
-    }
-    return total + row.amount;
-  }, 0);
-}
-
-function sumOrderTotals(payload: unknown): number {
-  if (!Array.isArray(payload)) {
-    return 0;
-  }
-  return payload.reduce((total, row) => {
-    if (
-      !row ||
-      typeof row !== 'object' ||
-      !('total_amount' in row) ||
-      typeof row.total_amount !== 'number'
-    ) {
-      return total;
-    }
-    return total + row.total_amount;
-  }, 0);
-}
-
-function chartFromOrders(payload: unknown): ChartPoint[] {
-  if (!Array.isArray(payload)) {
-    return [];
-  }
-
-  const buckets = new Map<string, number>();
-  for (const row of payload) {
-    if (!row || typeof row !== 'object') {
-      continue;
-    }
-    const createdAt =
-      'created_at' in row && typeof row.created_at === 'string' ? row.created_at : null;
-    const amount =
-      'total_amount' in row && typeof row.total_amount === 'number' ? row.total_amount : 0;
-    if (!createdAt) {
-      continue;
-    }
-    const parsed = new Date(createdAt);
-    if (Number.isNaN(parsed.getTime())) {
-      continue;
-    }
-    const key = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(
-      parsed.getDate(),
-    ).padStart(2, '0')}`;
-    buckets.set(key, (buckets.get(key) ?? 0) + amount);
-  }
-
-  return [...buckets.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([date, total]) => ({ date, total }));
-}
 
 export default function Dashboard() {
   const router = useRouter();
-  const [totalSales, setTotalSales] = useState(0);
-  const [totalExpenses, setTotalExpenses] = useState(0);
-  const [totalReturns, setTotalReturns] = useState(0);
-  const [activeBranches, setActiveBranches] = useState(0);
-  const [newUsers, setNewUsers] = useState(0);
-  const [chartData, setChartData] = useState<ChartPoint[]>([]);
+  const [orders, setOrders] = useState<OrderRow[]>([]);
+  const [returns, setReturns] = useState<ReturnRow[]>([]);
+  const [customers, setCustomers] = useState<CustomerRow[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
+  const [audits, setAudits] = useState<AuditRow[]>([]);
+  const [categories, setCategories] = useState<Map<number, string>>(new Map());
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const isAdmin = getStoredRole()?.toLowerCase() === 'admin';
+    const isAdmin = isAdminRole(getStoredRole());
     if (!isAdmin) {
       router.push('/pos');
       return;
     }
 
     let cancelled = false;
-    const range = getDateRange(dateFilter);
 
     async function loadDashboard() {
       try {
-        const [branchesRes, usersRes, statsRes, ordersRes, expensesRes, returnsRes] = await Promise.all([
-          apiFetch(`${API_BASE}/branches/`),
-          apiFetch(`${API_BASE}/users/`),
-          apiFetch(`${API_BASE}/dashboard-stats/`),
-          apiFetch(withDateQuery(`${API_BASE}/orders/`, range)),
-          apiFetch(withDateQuery(`${API_BASE}/expenses/`, range)),
-          apiFetch(withDateQuery(`${API_BASE}/returns/`, range)),
+        const [customersRes, ordersRes, returnsRes, productsRes, approvalsRes, auditsRes] = await Promise.all([
+          apiFetch(`${API_BASE}/customers/`),
+          apiFetch(`${API_BASE}/orders/`),
+          apiFetch(`${API_BASE}/returns/`),
+          apiFetch(`${API_BASE}/products/?limit=200`),
+          apiFetch(`${API_BASE}/approvals/`),
+          apiFetch(`${API_BASE}/audit-logs/?limit=20`),
         ]);
-
-        if (
-          !branchesRes.ok ||
-          !usersRes.ok ||
-          !statsRes.ok ||
-          !ordersRes.ok ||
-          !expensesRes.ok ||
-          !returnsRes.ok
-        ) {
+        if (!customersRes.ok || !ordersRes.ok || !returnsRes.ok || !productsRes.ok) {
           throw new Error('Failed to load dashboard data');
         }
-
-        const branches: unknown = await branchesRes.json();
-        const users: unknown = await usersRes.json();
-        const stats: unknown = await statsRes.json();
-        const orders: unknown = await ordersRes.json();
-        const expenses: unknown = await expensesRes.json();
-        const returns: unknown = await returnsRes.json();
-        const sales = sumOrderTotals(orders);
-        const userCount =
-          stats &&
-          typeof stats === 'object' &&
-          'user_count' in stats &&
-          typeof stats.user_count === 'number'
-            ? stats.user_count
-            : Array.isArray(users)
-              ? users.length
-              : 0;
-
-        if (!cancelled) {
-          setTotalSales(sales);
-          setTotalExpenses(sumExpenseAmounts(expenses));
-          setTotalReturns(sumRefundAmounts(returns));
-          setActiveBranches(Array.isArray(branches) ? branches.length : 0);
-          setNewUsers(userCount);
-          setChartData(chartFromOrders(orders));
-          setError(null);
+        const customerRows: unknown = await customersRes.json();
+        const orderRows: unknown = await ordersRes.json();
+        const returnRows: unknown = await returnsRes.json();
+        const productRows: unknown = await productsRes.json();
+        const approvalRows: unknown = approvalsRes.ok ? await approvalsRes.json() : [];
+        const auditRows: unknown = auditsRes.ok ? await auditsRes.json() : [];
+        if (cancelled) {
+          return;
         }
+        setCustomers(Array.isArray(customerRows) ? (customerRows as CustomerRow[]) : []);
+        setOrders(Array.isArray(orderRows) ? (orderRows as OrderRow[]) : []);
+        setReturns(Array.isArray(returnRows) ? (returnRows as ReturnRow[]) : []);
+        setApprovals(Array.isArray(approvalRows) ? (approvalRows as ApprovalRow[]) : []);
+        setAudits(Array.isArray(auditRows) ? (auditRows as AuditRow[]) : []);
+        const nextCategories = new Map<number, string>();
+        if (Array.isArray(productRows)) {
+          for (const row of productRows as ProductRow[]) {
+            if (row && typeof row.id === 'number') {
+              nextCategories.set(row.id, row.category?.trim() || 'Uncategorized');
+            }
+          }
+        }
+        setCategories(nextCategories);
+        setError(null);
       } catch {
         if (!cancelled) {
           setError('Unable to load data from the server.');
@@ -252,210 +99,222 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [router, dateFilter]);
+  }, [router]);
 
-  const cashInHand = totalSales - totalExpenses - totalReturns;
+  const view = useMemo(
+    () => buildDashboard({ orders, returns, customers, categories, dateFilter, approvals, audits }),
+    [approvals, audits, categories, customers, dateFilter, orders, returns],
+  );
+
+  const periodLabel = DATE_FILTERS.find((option) => option.id === dateFilter)?.label ?? 'All Time';
+  const categoryShare = view.categorySales.reduce((sum, entry) => sum + entry.total, 0);
+
+  function renderWidget(id: WidgetId, handleProps: DragHandleProps) {
+    if (id === 'kpi-revenue') {
+      return (
+        <WidgetShell
+          title="Total Revenue"
+          subtitle={periodLabel}
+          dragHandleProps={handleProps}
+          detail={
+            <>
+              <KpiValue value={formatCurrency(view.sales)} trend={view.trends.sales} hint="vs last week" icon="revenue" />
+              <DataTable
+                columns={['When', 'Customer', 'Amount']}
+                rows={view.recentOrders.map((order) => [formatWhen(order.created_at), order.customer_phone || 'Walk-in', formatCurrency(order.total_amount || 0)])}
+              />
+            </>
+          }
+        >
+          <KpiValue value={formatCurrency(view.sales)} trend={view.trends.sales} hint="vs last week" icon="revenue" />
+        </WidgetShell>
+      );
+    }
+    if (id === 'kpi-orders') {
+      return (
+        <WidgetShell
+          title="Today's Orders"
+          subtitle="Invoices opened today"
+          dragHandleProps={handleProps}
+          detail={
+            <>
+              <KpiValue value={String(view.todaysOrders)} trend={view.trends.invoices} hint="vs last week" icon="orders" />
+              <DataTable
+                columns={['When', 'Customer', 'Amount']}
+                rows={view.todaysOrderRows.map((order) => [formatWhen(order.created_at), order.customer_phone || 'Walk-in', formatCurrency(order.total_amount || 0)])}
+              />
+            </>
+          }
+        >
+          <KpiValue value={String(view.todaysOrders)} trend={view.trends.invoices} hint="vs last week" icon="orders" />
+        </WidgetShell>
+      );
+    }
+    if (id === 'kpi-customers') {
+      return (
+        <WidgetShell
+          title="Total Customers"
+          subtitle="Unique phones on invoices"
+          dragHandleProps={handleProps}
+          detail={
+            <>
+              <KpiValue value={String(view.customers)} trend={view.trends.customers} hint="vs last week" icon="customers" />
+              <DataTable
+                columns={['Phone', 'Visits', 'Spent']}
+                rows={view.customerRows.slice(0, 12).map((row) => [row.customer_phone, String(row.total_visits), formatCurrency(row.total_spent)])}
+              />
+            </>
+          }
+        >
+          <KpiValue value={String(view.customers)} trend={view.trends.customers} hint="vs last week" icon="customers" />
+        </WidgetShell>
+      );
+    }
+    if (id === 'kpi-approvals') {
+      return (
+        <WidgetShell
+          title="Pending Approvals"
+          subtitle="Maker-checker queue"
+          dragHandleProps={handleProps}
+          detail={
+            <>
+              <KpiValue value={String(view.pendingApprovals)} hint="waiting for review" icon="approvals" />
+              <DataTable
+                columns={['Request', 'Detail', 'Status']}
+                rows={view.pendingRows.map((row) => [
+                  `${row.action_type || row.action} ${row.module_name || row.entity_type}`,
+                  row.payload?.summary || row.payload?.name || row.payload?.code_number || '—',
+                  row.status,
+                ])}
+              />
+            </>
+          }
+        >
+          <KpiValue value={String(view.pendingApprovals)} hint="waiting for review" icon="approvals" />
+        </WidgetShell>
+      );
+    }
+    if (id === 'revenue') {
+      return (
+        <WidgetShell
+          title="Revenue Analytics"
+          subtitle="This month compared with last month"
+          dragHandleProps={handleProps}
+          className="min-h-[320px]"
+          detail={
+            <>
+              <RevenueAreaChart data={view.monthComparison} height={360} />
+              <DataTable
+                columns={['Day', 'This month', 'Last month']}
+                rows={view.monthComparison.map((point) => [point.day, formatCurrency(point.current ?? 0), formatCurrency(point.previous)])}
+              />
+            </>
+          }
+        >
+          <RevenueAreaChart data={view.monthComparison} />
+        </WidgetShell>
+      );
+    }
+    if (id === 'products') {
+      return (
+        <WidgetShell
+          title="Top Selling Products"
+          subtitle={`Highest revenue · ${periodLabel}`}
+          dragHandleProps={handleProps}
+          className="min-h-[320px]"
+          detail={
+            <>
+              <ProductsBarChart data={view.topProducts} height={360} />
+              <DataTable
+                columns={['Product', 'Revenue']}
+                rows={view.topProducts.map((row) => [row.name, formatCurrency(row.total)])}
+              />
+            </>
+          }
+        >
+          <ProductsBarChart data={view.topProducts.slice(0, 5)} />
+        </WidgetShell>
+      );
+    }
+    if (id === 'categories') {
+      return (
+        <WidgetShell
+          title="Sales by Category"
+          subtitle={`Revenue share · ${periodLabel}`}
+          dragHandleProps={handleProps}
+          className="min-h-[320px]"
+          detail={
+            <>
+              <CategoryDonut data={view.categorySales.slice(0, 8)} height={320} />
+              <DataTable
+                columns={['Category', 'Revenue', 'Share']}
+                rows={view.categorySales.map((row) => [
+                  row.name,
+                  formatCurrency(row.total),
+                  categoryShare > 0 ? `${Math.round((row.total / categoryShare) * 100)}%` : '0%',
+                ])}
+              />
+            </>
+          }
+        >
+          <CategoryDonut data={view.categorySales.slice(0, 6)} />
+        </WidgetShell>
+      );
+    }
+    return (
+      <WidgetShell
+        title="Recent Activity"
+        subtitle="Approvals and system actions"
+        dragHandleProps={handleProps}
+        className="min-h-[320px]"
+        detail={
+          <>
+            <ActivityList items={view.activity} limit={8} />
+            <DataTable
+              columns={['When', 'Action', 'Detail', 'Status']}
+              rows={view.activity.slice(0, 20).map((item) => [formatWhen(item.at), item.title, item.detail, item.status])}
+            />
+          </>
+        }
+      >
+        <ActivityList items={view.activity} limit={6} />
+      </WidgetShell>
+    );
+  }
 
   return (
     <AppShell active="dashboard">
-          <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <h1 className="text-2xl font-semibold text-gray-800 sm:text-3xl">Dashboard Overview</h1>
-            <div
-              className="inline-flex w-full overflow-x-auto rounded-lg bg-white p-1 shadow-sm ring-1 ring-gray-200 sm:w-auto"
-              role="group"
-              aria-label="Date filter"
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl dark:text-slate-100">Dashboard</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Drag a widget by its grip. Expand any card for the full breakdown.</p>
+        </div>
+        <div className="inline-flex w-full overflow-x-auto rounded-full bg-white p-1 shadow-sm ring-1 ring-gray-100 sm:w-auto dark:bg-slate-800 dark:ring-slate-700" role="group" aria-label="Date filter">
+          {DATE_FILTERS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setDateFilter(option.id)}
+              className={`shrink-0 rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+                dateFilter === option.id ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700'
+              }`}
             >
-              {DATE_FILTERS.map((option) => {
-                const active = dateFilter === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setDateFilter(option.id)}
-                    className={`shrink-0 rounded-md px-3 py-1.5 text-sm font-semibold transition ${
-                      active
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-          {loading ? (
-            <div className="flex items-center justify-center rounded-lg border border-gray-100 bg-white p-16 shadow-sm">
-              <div className="flex flex-col items-center gap-3">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
-                <p className="text-sm font-medium text-gray-500">Loading data...</p>
-              </div>
-            </div>
-          ) : (
-            <>
-              {error && (
-                <div className="mb-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {error}
-                </div>
-              )}
-
-              {/* Stats Cards */}
-              <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-3 2xl:grid-cols-6">
-                <div className="rounded-lg border border-gray-100 bg-white p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-500">Total Sales</p>
-                      <p className="mt-1 truncate text-2xl font-bold text-gray-900 xl:text-3xl">
-                        {formatCurrency(totalSales)}
-                      </p>
-                    </div>
-                    <div className="shrink-0 rounded-full bg-green-100 p-3 text-2xl text-green-600">💰</div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-amber-100 bg-white p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-amber-600">Total Returns</p>
-                      <p className="mt-1 truncate text-2xl font-bold text-amber-800 xl:text-3xl">
-                        {formatCurrency(totalReturns)}
-                      </p>
-                    </div>
-                    <div className="shrink-0 rounded-full bg-amber-100 p-3 text-2xl text-amber-700">↩️</div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-rose-100 bg-white p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-rose-500">Total Expenses</p>
-                      <p className="mt-1 truncate text-2xl font-bold text-rose-700 xl:text-3xl">
-                        {formatCurrency(totalExpenses)}
-                      </p>
-                    </div>
-                    <div className="shrink-0 rounded-full bg-rose-100 p-3 text-2xl text-rose-600">📉</div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-emerald-700">Cash in Hand</p>
-                      <p
-                        className={`mt-1 truncate text-2xl font-extrabold xl:text-3xl ${
-                          cashInHand >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                        }`}
-                      >
-                        {formatCurrency(cashInHand)}
-                      </p>
-                      <p className="mt-1 text-xs text-emerald-600/80">Net balance (sales − expenses − returns)</p>
-                    </div>
-                    <div className="shrink-0 rounded-full bg-emerald-100 p-3 text-2xl text-emerald-700">💵</div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-gray-100 bg-white p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-500">Active Branches</p>
-                      <p className="mt-1 text-2xl font-bold text-gray-900 xl:text-3xl">{activeBranches}</p>
-                    </div>
-                    <div className="shrink-0 rounded-full bg-blue-100 p-3 text-2xl text-blue-600">🏢</div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-gray-100 bg-white p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-500">New Users</p>
-                      <p className="mt-1 text-2xl font-bold text-gray-900 xl:text-3xl">{newUsers}</p>
-                    </div>
-                    <div className="shrink-0 rounded-full bg-purple-100 p-3 text-2xl text-purple-600">👥</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mb-8 rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-                <div className="mb-6 flex items-end justify-between gap-4">
-                  <div>
-                    <h2 className="text-xl font-bold text-gray-800">Sales trend</h2>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Daily order totals
-                      {dateFilter === 'today'
-                        ? ' for today'
-                        : dateFilter === 'week'
-                          ? ' for this week'
-                          : ' across all branches'}
-                    </p>
-                  </div>
-                  <p className="text-sm font-medium text-indigo-600">
-                    {chartData.length === 1 ? '1 day' : `${chartData.length} days`}
-                  </p>
-                </div>
-                {chartData.length === 0 ? (
-                  <div className="flex h-72 items-center justify-center rounded-lg bg-slate-50 text-sm text-gray-500">
-                    No sales data yet. Completed POS orders will appear here.
-                  </div>
-                ) : (
-                  <div className="h-64 w-full min-w-0 sm:h-80">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.28} />
-                            <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.04} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" vertical={false} />
-                        <XAxis
-                          dataKey="date"
-                          tickFormatter={formatChartDate}
-                          tick={{ fill: '#64748b', fontSize: 12 }}
-                          axisLine={{ stroke: '#e2e8f0' }}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tickFormatter={(value: number) =>
-                            `৳ ${Number(value).toLocaleString('en-BD', { maximumFractionDigits: 0 })}`
-                          }
-                          tick={{ fill: '#64748b', fontSize: 12 }}
-                          axisLine={false}
-                          tickLine={false}
-                          width={72}
-                        />
-                        <Tooltip
-                          cursor={{ stroke: '#c7d2fe', strokeWidth: 1 }}
-                          formatter={(value) => [formatCurrency(Number(value ?? 0)), 'Sales']}
-                          labelFormatter={(label) => formatChartDate(String(label))}
-                          contentStyle={{
-                            borderRadius: 12,
-                            border: '1px solid #e2e8f0',
-                            boxShadow: '0 10px 15px -3px rgb(15 23 42 / 0.08)',
-                            fontSize: 13,
-                          }}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="total"
-                          stroke="#4f46e5"
-                          strokeWidth={2.5}
-                          fill="url(#salesFill)"
-                          activeDot={{ r: 5, stroke: '#fff', strokeWidth: 2 }}
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-
-              {/* Recent Activity Area */}
-              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-100">
-                <h2 className="text-xl font-bold text-gray-800 mb-4">Recent Activity</h2>
-                <p className="text-gray-600">Your recent POS transactions and ERP updates will appear here.</p>
-              </div>
-            </>
-          )}
+      {loading ? (
+        <div className="flex h-64 items-center justify-center rounded-2xl border border-gray-100 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-100 border-t-indigo-600" />
+        </div>
+      ) : (
+        <>
+          {error ? <div className="mb-6 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">{error}</div> : null}
+          <DashboardBoard render={renderWidget} />
+        </>
+      )}
     </AppShell>
   );
 }

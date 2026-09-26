@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { AppShell, PageHeading } from '../../components/AppShell';
-import { API_BASE } from '../../utils/api';
+import { API_BASE, apiFetch } from '../../utils/api';
 
 type Tenant = {
   id: number;
@@ -36,7 +36,7 @@ export default function TenantsPage() {
   const [form, setForm] = useState(emptyForm);
 
   async function loadTenants() {
-    const response = await fetch(`${API_BASE}/tenants/`);
+    const response = await apiFetch(`${API_BASE}/tenants/`);
     if (!response.ok) {
       throw new Error('Failed to load tenants');
     }
@@ -88,7 +88,7 @@ export default function TenantsPage() {
     setFormError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/tenants/`, {
+      const response = await apiFetch(`${API_BASE}/tenants/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

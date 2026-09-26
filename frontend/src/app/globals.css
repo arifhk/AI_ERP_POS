@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #e2e8f0;
 }
 
 @theme inline {
@@ -12,17 +19,69 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+.dark :where(.bg-white, .bg-white\/95):not([data-paper], [data-paper] *) {
+  background-color: #1e293b;
+}
+
+.dark :where(.bg-slate-50, .bg-gray-50, .bg-gray-100):not([data-paper], [data-paper] *) {
+  background-color: #0f172a;
+}
+
+.dark :where(.bg-gray-200):not([data-paper], [data-paper] *) {
+  background-color: #1e293b;
+}
+
+.dark :where(.text-slate-900, .text-slate-800, .text-gray-900, .text-gray-800):not([data-paper], [data-paper] *) {
+  color: #f1f5f9;
+}
+
+.dark :where(.text-slate-700, .text-slate-600, .text-slate-500, .text-gray-700, .text-gray-600, .text-gray-500):not([data-paper], [data-paper] *) {
+  color: #94a3b8;
+}
+
+.dark :where(.border-gray-100, .border-gray-200, .border-gray-300, .border-slate-100, .border-slate-200):not([data-paper], [data-paper] *) {
+  border-color: #334155;
+}
+
+.dark :where(.divide-gray-100, .divide-gray-200) > :not([hidden], [data-paper]) ~ :not([hidden]) {
+  border-color: #334155;
+}
+
+.dark :where(.hover\:bg-slate-50, .hover\:bg-gray-50, .hover\:bg-gray-100, .hover\:bg-white):hover:not([data-paper], [data-paper] *) {
+  background-color: rgb(51 65 85 / 0.55);
+}
+
+.dark :where(input, select, textarea):not([type='checkbox'], [type='radio'], [type='range'], [data-paper], [data-paper] *) {
+  background-color: #0f172a;
+  border-color: #475569;
+  color: #f1f5f9;
+}
+
+.dark :where(input, textarea)::placeholder {
+  color: #94a3b8;
+}
+
+.dark :where(input, select, textarea):focus {
+  box-shadow: 0 0 0 3px rgb(99 102 241 / 0.5);
+}
+
+.dark :where(thead, th):not([data-paper], [data-paper] *) {
+  background-color: rgb(30 41 59 / 0.8);
+  color: #e2e8f0;
+}
+
+.dark :where(tbody tr):hover:not([data-paper], [data-paper] *) {
+  background-color: rgb(51 65 85 / 0.5);
 }
 
 @media print {

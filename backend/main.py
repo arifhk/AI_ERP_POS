@@ -1,6 +1,7 @@
 """FastAPI application entrypoint."""
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -12,10 +13,12 @@ from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth import create_access_token, get_current_user, hash_password, verify_password
+from rbac import assert_role_assignment, assert_tenant_access, normalize_role, read_scope, require_tenant_manager
 from config import cors_origins
 from database import get_session, init_db
 import models  # noqa: F401  — register tables on SQLModel.metadata
 from models import (
+    AuditLog,
     Expense,
     ExpenseCreate,
     ExpenseRead,
@@ -30,7 +33,8 @@ from models import (
     User,
     parse_iso_datetime,
 )
-from routers import branches, orders, products, tenants, users
+from routers import branches, orders, products, recovery, settings, system_admin, tenants, users
+from routers.catalog import approvals_router, masters_router
 from routers.users import UserRead, _validate_scope
 
 
@@ -65,7 +69,12 @@ app.include_router(tenants.router, prefix="/tenants", tags=["Tenants"])
 app.include_router(branches.router, prefix="/branches", tags=["Branches"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(products.router, prefix="/products", tags=["Products"])
+app.include_router(settings.router, prefix="/settings", tags=["Settings"])
+app.include_router(masters_router, prefix="/masters", tags=["Masters"])
+app.include_router(approvals_router, prefix="/approvals", tags=["Approvals"])
 app.include_router(orders.router, prefix="/orders", tags=["Orders"])  # POS checkout
+app.include_router(recovery.router, prefix="/auth", tags=["Auth"])
+app.include_router(system_admin.router, prefix="/system", tags=["System Owner"])
 
 
 class Token(SQLModel):
@@ -86,11 +95,7 @@ class ApproveUser(SQLModel):
 
 
 def _require_admin(current_user: User) -> None:
-    if (current_user.role or "").strip().lower() != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
+    require_tenant_manager(current_user)
 
 
 def _is_cashier_user(user: User) -> bool:
@@ -122,8 +127,8 @@ async def register(
         email=email,
         name=name,
         hashed_password=hash_password(password),
-        role="Admin" if is_bootstrap_admin else "Pending",
-        tenant_id=1,
+        role="system_owner" if is_bootstrap_admin else "Pending",
+        tenant_id=None if is_bootstrap_admin else 1,
         branch_id=None,
         is_active=is_bootstrap_admin,
     )
@@ -163,7 +168,11 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account pending admin approval",
         )
-    return Token(access_token=create_access_token({"sub": user.email, "role": user.role}))
+    return Token(
+        access_token=create_access_token(
+            {"sub": user.email, "role": user.role, "tenant_id": user.tenant_id}
+        )
+    )
 
 
 @app.patch("/users/{user_id}/approve", response_model=UserRead)
@@ -179,17 +188,22 @@ async def approve_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     role = payload.role.strip()
+    assert_role_assignment(current_user, role, existing=user)
     if not role:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Role is required",
         )
 
-    tenant_id = user.tenant_id or 1
-    await _validate_scope(session, tenant_id, payload.branch_id, role)
+    assert_tenant_access(current_user, user.tenant_id)
     user.role = role
     user.branch_id = payload.branch_id
-    user.tenant_id = tenant_id
+    if normalize_role(role) in {"system_owner", "super_admin"}:
+        user.tenant_id = None
+    else:
+        tenant_id = user.tenant_id or 1
+        await _validate_scope(session, tenant_id, payload.branch_id, role)
+        user.tenant_id = tenant_id
     user.is_active = True
     session.add(user)
     await session.commit()
@@ -199,16 +213,58 @@ async def approve_user(
 
 @app.get("/dashboard-stats/")
 async def dashboard_stats(
+    tenant_id: Optional[int] = Query(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, float | int]:
+    scope = read_scope(current_user, tenant_id)
     sales_statement = select(func.coalesce(func.sum(Order.total_amount), 0.0))
+    user_statement = select(func.count(User.id))
+    if scope is not None:
+        sales_statement = sales_statement.where(Order.tenant_id == scope)
+        user_statement = user_statement.where(User.tenant_id == scope)
     total_sales = (await session.exec(sales_statement)).one()
-    user_count = (await session.exec(select(func.count(User.id)))).one()
+    user_count = (await session.exec(user_statement)).one()
     return {
         "total_sales": float(total_sales or 0),
         "user_count": int(user_count or 0),
     }
+
+
+class AuditActivity(SQLModel):
+    id: int
+    action_type: str
+    entity_type: str
+    entity_id: Optional[int] = None
+    method: str
+    reason: Optional[str] = None
+    created_at: datetime
+
+
+@app.get("/audit-logs/", response_model=list[AuditActivity])
+async def recent_audit_logs(
+    limit: int = Query(12, ge=1, le=50),
+    tenant_id: Optional[int] = Query(None),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[AuditActivity]:
+    scope = read_scope(current_user, tenant_id)
+    statement = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+    if scope is not None:
+        statement = statement.where(AuditLog.tenant_id == scope)
+    rows = (await session.exec(statement)).all()
+    return [
+        AuditActivity(
+            id=int(row.id or 0),
+            action_type=row.action_type,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            method=row.method,
+            reason=row.reason,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
 
 
 class ChartPoint(SQLModel):
@@ -224,15 +280,19 @@ class CustomerSummary(SQLModel):
 
 @app.get("/chart-data/", response_model=list[ChartPoint])
 async def chart_data(
+    tenant_id: Optional[int] = Query(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[ChartPoint]:
+    scope = read_scope(current_user, tenant_id)
     day = func.date(Order.created_at)
     statement = (
         select(day, func.coalesce(func.sum(Order.total_amount), 0.0))
         .group_by(day)
         .order_by(day)
     )
+    if scope is not None:
+        statement = statement.where(Order.tenant_id == scope)
     rows = (await session.exec(statement)).all()
     return [
         ChartPoint(date=str(row[0]), total=round(float(row[1] or 0), 2))
@@ -243,9 +303,11 @@ async def chart_data(
 
 @app.get("/customers/", response_model=list[CustomerSummary])
 async def list_customers(
+    tenant_id: Optional[int] = Query(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[CustomerSummary]:
+    scope = read_scope(current_user, tenant_id)
     phone = func.trim(Order.customer_phone)
     visits = func.count(Order.id)
     spent = func.coalesce(func.sum(Order.total_amount), 0.0)
@@ -256,6 +318,8 @@ async def list_customers(
         .group_by(phone)
         .order_by(spent.desc())
     )
+    if scope is not None:
+        statement = statement.where(Order.tenant_id == scope)
     rows = (await session.exec(statement)).all()
     return [
         CustomerSummary(
@@ -314,10 +378,14 @@ async def create_expense(
 async def list_expenses(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[Expense]:
     statement = select(Expense).order_by(Expense.date.desc(), Expense.id.desc())
+    scope = read_scope(current_user, tenant_id)
+    if scope is not None:
+        statement = statement.where(Expense.tenant_id == scope)
     try:
         start = parse_iso_datetime(start_date)
         end = parse_iso_datetime(end_date, is_end=True)
@@ -411,6 +479,7 @@ async def create_purchase(
 
 @app.get("/purchases/", response_model=list[PurchaseRead])
 async def list_purchases(
+    tenant_id: Optional[int] = Query(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[PurchaseRead]:
@@ -419,6 +488,9 @@ async def list_purchases(
         .options(selectinload(Purchase.product))
         .order_by(Purchase.date.desc(), Purchase.id.desc())
     )
+    scope = read_scope(current_user, tenant_id)
+    if scope is not None:
+        statement = statement.where(Purchase.tenant_id == scope)
     if _is_cashier_user(current_user):
         if current_user.branch_id is None:
             return []
@@ -557,6 +629,7 @@ async def create_return(
 async def list_returns(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[ReturnRead]:
@@ -565,6 +638,9 @@ async def list_returns(
         .options(selectinload(SalesReturn.product))
         .order_by(SalesReturn.date.desc(), SalesReturn.id.desc())
     )
+    scope = read_scope(current_user, tenant_id)
+    if scope is not None:
+        statement = statement.where(SalesReturn.tenant_id == scope)
     try:
         start = parse_iso_datetime(start_date)
         end = parse_iso_datetime(end_date, is_end=True)

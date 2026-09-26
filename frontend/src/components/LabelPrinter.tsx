@@ -99,6 +99,7 @@ function BarcodeLabelCard({
 
   return (
     <div
+      data-paper
       className="barcode-label-card box-border flex flex-col items-center justify-between overflow-hidden bg-white text-black"
       style={{
         width: `${widthMm}mm`,
@@ -329,7 +330,7 @@ export function LabelPrinter({ product, onClose }: LabelPrinterProps) {
             </aside>
 
             <div className="min-h-[280px] overflow-auto bg-gray-200 p-5 print:hidden">
-              <div className="mx-auto w-max rounded-sm bg-white p-[1mm] shadow-sm" style={gridStyle}>
+              <div data-paper className="mx-auto w-max rounded-sm bg-white p-[1mm] shadow-sm" style={gridStyle}>
                 {labels}
               </div>
             </div>

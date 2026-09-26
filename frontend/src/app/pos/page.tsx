@@ -13,21 +13,97 @@ import { AppShell } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
 import { printWithMode } from '../../utils/print';
 
+type PosVariant = {
+  id: number;
+  sku: string;
+  attributes?: Record<string, string>;
+  stock_quantity: number;
+  effective_price: number;
+  effective_sale_vat?: number;
+};
+
 type Product = {
   id: number;
   name: string;
   barcode: string;
+  additional_barcodes?: string[];
   price: number;
   stock_quantity: number;
   is_active: boolean;
+  is_hidden?: boolean;
+  sale_vat?: number;
+  variants?: PosVariant[];
 };
 
-type CartItem = {
-  id: number;
+type Sellable = {
+  cartKey: string;
+  productId: number;
+  variantId?: number;
   name: string;
   price: number;
-  quantity: number;
   stock_quantity: number;
+  vatRate?: number;
+};
+
+function parentSellable(product: Product): Sellable {
+  return {
+    cartKey: `p-${product.id}`,
+    productId: product.id,
+    name: product.name,
+    price: product.price,
+    stock_quantity: product.stock_quantity,
+    vatRate: product.sale_vat,
+  };
+}
+
+function variantSellable(product: Product, variant: PosVariant): Sellable {
+  const label = Object.values(variant.attributes ?? {}).filter(Boolean).join(' / ');
+  return {
+    cartKey: `v-${variant.id}`,
+    productId: product.id,
+    variantId: variant.id,
+    name: label ? `${product.name} (${label})` : `${product.name} (${variant.sku})`,
+    price: variant.effective_price,
+    stock_quantity: variant.stock_quantity,
+    vatRate: variant.effective_sale_vat,
+  };
+}
+
+function productMatchesBarcode(product: Product, term: string) {
+  if (product.barcode.toLowerCase() === term) {
+    return true;
+  }
+  return (product.additional_barcodes ?? []).some((code) => code.toLowerCase() === term);
+}
+
+function findSellable(products: Product[], term: string): Sellable | undefined {
+  for (const product of products) {
+    const variant = (product.variants ?? []).find((item) => item.sku.toLowerCase() === term);
+    if (variant) {
+      return variantSellable(product, variant);
+    }
+    if (productMatchesBarcode(product, term)) {
+      return parentSellable(product);
+    }
+  }
+  return undefined;
+}
+
+function productMatchesQuery(product: Product, term: string) {
+  return (
+    product.name.toLowerCase().includes(term) ||
+    product.barcode.toLowerCase().includes(term) ||
+    (product.additional_barcodes ?? []).some((code) => code.toLowerCase().includes(term)) ||
+    (product.variants ?? []).some(
+      (variant) =>
+        variant.sku.toLowerCase().includes(term) ||
+        Object.values(variant.attributes ?? {}).some((value) => value.toLowerCase().includes(term)),
+    )
+  );
+}
+
+type CartItem = Sellable & {
+  quantity: number;
 };
 
 export default function PosPage() {
@@ -53,7 +129,7 @@ export default function PosPage() {
 
     const data: unknown = await response.json();
     const list = Array.isArray(data) ? (data as Product[]) : [];
-    setProducts(list.filter((product) => product.is_active));
+    setProducts(list.filter((product) => product.is_active && !product.is_hidden));
   }
 
   useEffect(() => {
@@ -88,11 +164,7 @@ export default function PosPage() {
     if (!term) {
       return products;
     }
-    return products.filter(
-      (product) =>
-        product.name.toLowerCase().includes(term) ||
-        product.barcode.toLowerCase().includes(term),
-    );
+    return products.filter((product) => productMatchesQuery(product, term));
   }, [products, query]);
 
   const subtotal = useMemo(
@@ -102,13 +174,13 @@ export default function PosPage() {
   const vat = subtotal * VAT_RATE;
   const grandTotal = subtotal + vat;
 
-  const addToCart = useCallback((product: Product) => {
-    if (product.stock_quantity <= 0) {
+  const addToCart = useCallback((sellable: Sellable) => {
+    if (sellable.stock_quantity <= 0) {
       setNotice('Out of Stock!');
       return;
     }
 
-    const existing = cart.find((item) => item.id === product.id);
+    const existing = cart.find((item) => item.cartKey === sellable.cartKey);
     if (existing && existing.quantity >= existing.stock_quantity) {
       setNotice('Out of Stock!');
       return;
@@ -116,24 +188,15 @@ export default function PosPage() {
 
     setNotice(null);
     setCart((current) => {
-      const inCart = current.find((item) => item.id === product.id);
+      const inCart = current.find((item) => item.cartKey === sellable.cartKey);
       if (!inCart) {
-        return [
-          ...current,
-          {
-            id: product.id,
-            name: product.name,
-            price: product.price,
-            quantity: 1,
-            stock_quantity: product.stock_quantity,
-          },
-        ];
+        return [...current, { ...sellable, quantity: 1 }];
       }
       if (inCart.quantity >= inCart.stock_quantity) {
         return current;
       }
       return current.map((item) =>
-        item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
+        item.cartKey === sellable.cartKey ? { ...item, quantity: item.quantity + 1 } : item,
       );
     });
   }, [cart]);
@@ -144,7 +207,7 @@ export default function PosPage() {
       if (!term) {
         return;
       }
-      const match = productsRef.current.find((product) => product.barcode.toLowerCase() === term);
+      const match = findSellable(productsRef.current, term);
       if (!match) {
         setNotice(`No product matches barcode ${code.trim()}.`);
         return;
@@ -198,8 +261,8 @@ export default function PosPage() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [addByBarcode]);
 
-  function changeQuantity(productId: number, delta: number) {
-    const target = cart.find((item) => item.id === productId);
+  function changeQuantity(cartKey: string, delta: number) {
+    const target = cart.find((item) => item.cartKey === cartKey);
     if (target && delta > 0 && target.quantity >= target.stock_quantity) {
       setNotice('Out of Stock!');
       return;
@@ -208,7 +271,7 @@ export default function PosPage() {
     setNotice(null);
     setCart((current) =>
       current.flatMap((item) => {
-        if (item.id !== productId) {
+        if (item.cartKey !== cartKey) {
           return [item];
         }
         const nextQty = item.quantity + delta;
@@ -234,11 +297,8 @@ export default function PosPage() {
       return;
     }
 
-    const exactBarcode = products.find(
-      (product) => product.barcode.toLowerCase() === term,
-    );
-    const match =
-      exactBarcode ?? (filteredProducts.length === 1 ? filteredProducts[0] : undefined);
+    const exactBarcode = findSellable(products, term);
+    const match = exactBarcode ?? (filteredProducts.length === 1 ? parentSellable(filteredProducts[0]) : undefined);
 
     if (!match) {
       return;
@@ -267,7 +327,8 @@ export default function PosPage() {
           branch_id: 1,
           customer_phone: phone || null,
           items: cart.map((item) => ({
-            product_id: item.id,
+            product_id: item.productId,
+            variant_id: item.variantId ?? null,
             quantity: item.quantity,
             price: item.price,
           })),
@@ -340,7 +401,7 @@ export default function PosPage() {
         ) : (
           <ul className="space-y-3">
             {cart.map((item) => (
-              <li key={item.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <li key={item.cartKey} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-sm font-medium text-gray-900">{item.name}</p>
                   <p className="text-sm font-semibold text-gray-900">
@@ -352,7 +413,7 @@ export default function PosPage() {
                   <div className="inline-flex items-center rounded-md border border-gray-200 bg-white">
                     <button
                       type="button"
-                      onClick={() => changeQuantity(item.id, -1)}
+                      onClick={() => changeQuantity(item.cartKey, -1)}
                       className="px-2.5 py-1 text-sm font-semibold text-gray-700 hover:bg-gray-100"
                       aria-label={`Decrease ${item.name}`}
                     >
@@ -363,7 +424,7 @@ export default function PosPage() {
                     </span>
                     <button
                       type="button"
-                      onClick={() => changeQuantity(item.id, 1)}
+                      onClick={() => changeQuantity(item.cartKey, 1)}
                       disabled={item.quantity >= item.stock_quantity}
                       className="px-2.5 py-1 text-sm font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-300"
                       aria-label={`Increase ${item.name}`}
@@ -373,7 +434,7 @@ export default function PosPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => changeQuantity(item.id, -item.quantity)}
+                    onClick={() => changeQuantity(item.cartKey, -item.quantity)}
                     className="text-xs font-medium text-red-500 hover:text-red-600"
                   >
                     Remove
@@ -504,7 +565,7 @@ export default function PosPage() {
                         <button
                           key={product.id}
                           type="button"
-                          onClick={() => addToCart(product)}
+                          onClick={() => addToCart(parentSellable(product))}
                           className={`rounded-xl border border-gray-100 bg-white p-4 text-left shadow-sm transition hover:border-indigo-200 hover:shadow-md ${
                             outOfStock ? 'opacity-50' : ''
                           }`}

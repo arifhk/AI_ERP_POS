@@ -10,6 +10,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from auth import get_current_user, hash_password
 from database import get_session
 from models import Branch, Tenant, User, UserRole
+from rbac import (
+    assert_role_assignment,
+    assert_tenant_access,
+    is_platform_admin,
+    normalize_role,
+    require_tenant_manager,
+    restrict,
+    write_tenant,
+)
 
 router = APIRouter()
 
@@ -58,11 +67,11 @@ async def _validate_scope(
     branch_id: Optional[int],
     role: str,
 ) -> None:
-    normalized_role = role.strip().lower().replace(" ", "_")
-    if normalized_role != UserRole.SUPER_ADMIN.value and tenant_id is None:
+    normalized_role = normalize_role(role)
+    if normalized_role not in {UserRole.SYSTEM_OWNER.value, UserRole.SUPER_ADMIN.value} and tenant_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="tenant_id is required unless role is super_admin",
+            detail="tenant_id is required unless the role is System Owner or Super Admin",
         )
     if tenant_id is not None:
         tenant = await session.get(Tenant, tenant_id)
@@ -83,7 +92,16 @@ async def _validate_scope(
 async def create_user(
     payload: UserCreate,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> User:
+    require_tenant_manager(current_user)
+    assert_role_assignment(current_user, payload.role)
+    if normalize_role(payload.role) in {UserRole.SYSTEM_OWNER.value, UserRole.SUPER_ADMIN.value}:
+        if not is_platform_admin(current_user):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only a System Owner can assign this role.")
+        payload.tenant_id = None
+    else:
+        payload.tenant_id = write_tenant(current_user, payload.tenant_id)
     await _validate_scope(session, payload.tenant_id, payload.branch_id, payload.role)
     user = User(
         email=payload.email.strip(),
@@ -116,9 +134,8 @@ async def list_users(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[User]:
-    statement = select(User)
-    if tenant_id is not None:
-        statement = statement.where(User.tenant_id == tenant_id)
+    require_tenant_manager(current_user)
+    statement = restrict(select(User), User.tenant_id, current_user, tenant_id)
     if branch_id is not None:
         statement = statement.where(User.branch_id == branch_id)
     result = await session.exec(statement.offset(skip).limit(limit).order_by(User.id))
@@ -129,8 +146,12 @@ async def list_users(
 async def get_user(
     user_id: int,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> User:
-    return await _get_user(session, user_id)
+    require_tenant_manager(current_user)
+    user = await _get_user(session, user_id)
+    assert_tenant_access(current_user, user.tenant_id)
+    return user
 
 
 @router.patch("/{user_id}", response_model=UserRead)
@@ -138,9 +159,13 @@ async def update_user(
     user_id: int,
     payload: UserUpdate,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> User:
+    require_tenant_manager(current_user)
     user = await _get_user(session, user_id)
+    assert_tenant_access(current_user, user.tenant_id)
     data = payload.model_dump(exclude_unset=True)
+    assert_role_assignment(current_user, data.get("role", user.role), existing=user)
     password = data.pop("password", None)
     next_tenant_id = data.get("tenant_id", user.tenant_id)
     next_branch_id = data.get("branch_id", user.branch_id)
@@ -166,7 +191,11 @@ async def update_user(
 async def delete_user(
     user_id: int,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> None:
+    require_tenant_manager(current_user)
     user = await _get_user(session, user_id)
+    assert_tenant_access(current_user, user.tenant_id)
+    assert_role_assignment(current_user, user.role, existing=user)
     await session.delete(user)
     await session.commit()

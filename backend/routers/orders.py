@@ -9,8 +9,9 @@ from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth import get_current_user
+from rbac import restrict
 from database import get_session
-from models import Branch, Order, OrderItem, Product, Tenant, User, parse_iso_datetime
+from models import Branch, Order, OrderItem, Product, ProductVariant, Tenant, User, parse_iso_datetime
 
 router = APIRouter()
 
@@ -19,6 +20,7 @@ class OrderItemCreate(SQLModel):
     product_id: int
     quantity: int
     price: float
+    variant_id: Optional[int] = None
 
 
 class OrderCreate(SQLModel):
@@ -92,10 +94,11 @@ def send_sms_notification(phone: str, amount: float) -> None:
 async def list_orders(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    tenant_id: Optional[int] = Query(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[OrderRead]:
-    statement = select(Order).options(_ORDER_LOAD).order_by(Order.created_at.desc())
+    statement = restrict(select(Order).options(_ORDER_LOAD).order_by(Order.created_at.desc()), Order.tenant_id, current_user, tenant_id)
     try:
         start = parse_iso_datetime(start_date)
         end = parse_iso_datetime(end_date, is_end=True)
@@ -124,6 +127,7 @@ async def create_order(
     await _require_scope(session, payload.tenant_id, payload.branch_id)
 
     needed: dict[int, int] = defaultdict(int)
+    variant_needed: dict[int, int] = defaultdict(int)
     for item in payload.items:
         if item.quantity < 1:
             raise HTTPException(
@@ -135,7 +139,10 @@ async def create_order(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Item price cannot be negative",
             )
-        needed[item.product_id] += item.quantity
+        if item.variant_id:
+            variant_needed[item.variant_id] += item.quantity
+        else:
+            needed[item.product_id] += item.quantity
 
     products: dict[int, Product] = {}
     for product_id, quantity in needed.items():
@@ -166,6 +173,41 @@ async def create_order(
             )
         products[product_id] = product
 
+    variants: dict[int, ProductVariant] = {}
+    for variant_id, quantity in variant_needed.items():
+        statement = select(ProductVariant).where(ProductVariant.id == variant_id).with_for_update()
+        variant = (await session.exec(statement)).first()
+        if variant is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Variant {variant_id} not found",
+            )
+        parent = products.get(variant.product_id)
+        if parent is None:
+            parent_statement = select(Product).where(Product.id == variant.product_id).with_for_update()
+            parent = (await session.exec(parent_statement)).first()
+        if parent is None or parent.tenant_id != payload.tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Variant does not belong to this order",
+            )
+        line = next(item for item in payload.items if item.variant_id == variant_id)
+        if line.product_id != variant.product_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Variant does not belong to the given product",
+            )
+        if variant.stock_quantity < quantity:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Insufficient stock for '{variant.sku}'. "
+                    f"Available: {variant.stock_quantity}, requested: {quantity}"
+                ),
+            )
+        products[parent.id or variant.product_id] = parent
+        variants[variant_id] = variant
+
     total_amount = sum(item.quantity * item.price for item in payload.items)
     phone = (payload.customer_phone or "").strip() or None
     order = Order(
@@ -183,6 +225,7 @@ async def create_order(
                 OrderItem(
                     order_id=order.id,
                     product_id=item.product_id,
+                    variant_id=item.variant_id,
                     quantity=item.quantity,
                     price=item.price,
                 )
@@ -190,6 +233,9 @@ async def create_order(
         for product_id, quantity in needed.items():
             products[product_id].stock_quantity -= quantity
             session.add(products[product_id])
+        for variant_id, quantity in variant_needed.items():
+            variants[variant_id].stock_quantity -= quantity
+            session.add(variants[variant_id])
         await session.commit()
     except IntegrityError:
         await session.rollback()

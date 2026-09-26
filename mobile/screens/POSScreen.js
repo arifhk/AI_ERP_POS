@@ -18,6 +18,58 @@ import axios from 'axios';
 
 import { API_BASE, apiErrorMessage, formatCurrency, getAuthHeaders } from '../config/api';
 
+function productMatchesBarcode(product, term) {
+  if (String(product.barcode).toLowerCase() === term) {
+    return true;
+  }
+  const extras = Array.isArray(product.additional_barcodes) ? product.additional_barcodes : [];
+  return extras.some((code) => String(code).toLowerCase() === term);
+}
+
+function productMatchesQuery(product, term) {
+  const extras = Array.isArray(product.additional_barcodes) ? product.additional_barcodes : [];
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+  return (
+    String(product.name).toLowerCase().includes(term) ||
+    String(product.barcode).toLowerCase().includes(term) ||
+    extras.some((code) => String(code).toLowerCase().includes(term)) ||
+    variants.some((variant) => String(variant.sku).toLowerCase().includes(term))
+  );
+}
+
+function parentSellable(product) {
+  return {
+    cartKey: `p-${product.id}`,
+    id: product.id,
+    variantId: null,
+    name: product.name,
+    price: product.price,
+    stock_quantity: product.stock_quantity,
+  };
+}
+
+function resolveScan(products, term) {
+  for (const product of products) {
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+    const variant = variants.find((item) => String(item.sku).toLowerCase() === term);
+    if (variant) {
+      const label = Object.values(variant.attributes || {}).filter(Boolean).join(' / ');
+      return {
+        cartKey: `v-${variant.id}`,
+        id: product.id,
+        variantId: variant.id,
+        name: label ? `${product.name} (${label})` : `${product.name} (${variant.sku})`,
+        price: variant.effective_price,
+        stock_quantity: variant.stock_quantity,
+      };
+    }
+    if (productMatchesBarcode(product, term)) {
+      return parentSellable(product);
+    }
+  }
+  return undefined;
+}
+
 const VAT_RATE = 0.05;
 const BARCODE_TYPES = ['code128', 'ean13', 'ean8', 'upc_a', 'upc_e', 'code39', 'qr'];
 
@@ -43,7 +95,7 @@ export default function POSScreen({ navigation }) {
     try {
       const response = await axios.get(`${API_BASE}/products/`, { headers, timeout: 15000 });
       const list = Array.isArray(response.data) ? response.data : [];
-      setProducts(list.filter((product) => product.is_active));
+      setProducts(list.filter((product) => product.is_active && !product.is_hidden));
       setError(null);
     } catch (caught) {
       if (caught?.response?.status === 401) {
@@ -66,11 +118,7 @@ export default function POSScreen({ navigation }) {
     if (!term) {
       return products;
     }
-    return products.filter(
-      (product) =>
-        String(product.name).toLowerCase().includes(term) ||
-        String(product.barcode).toLowerCase().includes(term),
-    );
+    return products.filter((product) => productMatchesQuery(product, term));
   }, [products, query]);
 
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -82,31 +130,23 @@ export default function POSScreen({ navigation }) {
   cartRef.current = cart;
 
   const addToCart = useCallback((product) => {
+    const sellable = product.cartKey ? product : parentSellable(product);
     const current = cartRef.current;
-    const existing = current.find((item) => item.id === product.id);
-    if (product.stock_quantity <= 0 || (existing && existing.quantity >= existing.stock_quantity)) {
-      Alert.alert('Out of stock', `${product.name} has no remaining stock to add.`);
+    const existing = current.find((item) => item.cartKey === sellable.cartKey);
+    if (sellable.stock_quantity <= 0 || (existing && existing.quantity >= existing.stock_quantity)) {
+      Alert.alert('Out of stock', `${sellable.name} has no remaining stock to add.`);
       return false;
     }
     setCart((rows) => {
-      const inCart = rows.find((item) => item.id === product.id);
+      const inCart = rows.find((item) => item.cartKey === sellable.cartKey);
       if (!inCart) {
-        return [
-          ...rows,
-          {
-            id: product.id,
-            name: product.name,
-            price: product.price,
-            quantity: 1,
-            stock_quantity: product.stock_quantity,
-          },
-        ];
+        return [...rows, { ...sellable, quantity: 1 }];
       }
       if (inCart.quantity >= inCart.stock_quantity) {
         return rows;
       }
       return rows.map((item) =>
-        item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
+        item.cartKey === sellable.cartKey ? { ...item, quantity: item.quantity + 1 } : item,
       );
     });
     return true;
@@ -117,7 +157,7 @@ export default function POSScreen({ navigation }) {
     if (!term) {
       return;
     }
-    const match = products.find((product) => String(product.barcode).toLowerCase() === term);
+    const match = resolveScan(products, term);
     if (!match) {
       Alert.alert('Not found', `No product matches barcode ${code.trim()}.`);
       return;
@@ -128,10 +168,10 @@ export default function POSScreen({ navigation }) {
     }
   }
 
-  function changeQty(productId, delta) {
+  function changeQty(cartKey, delta) {
     setCart((current) =>
       current.flatMap((item) => {
-        if (item.id !== productId) {
+        if (item.cartKey !== cartKey) {
           return [item];
         }
         const next = item.quantity + delta;
@@ -173,7 +213,7 @@ export default function POSScreen({ navigation }) {
     if (!term) {
       return;
     }
-    const exact = products.find((product) => String(product.barcode).toLowerCase() === term);
+    const exact = resolveScan(products, term);
     const match = exact ?? (filtered.length === 1 ? filtered[0] : undefined);
     if (!match) {
       return;
@@ -202,6 +242,7 @@ export default function POSScreen({ navigation }) {
           customer_phone: phone.trim() || null,
           items: cart.map((item) => ({
             product_id: item.id,
+            variant_id: item.variantId || null,
             quantity: item.quantity,
             price: item.price,
           })),
@@ -304,7 +345,7 @@ export default function POSScreen({ navigation }) {
                 <Text style={styles.muted}>Tap a product to start billing.</Text>
               ) : (
                 cart.map((item) => (
-                  <View key={item.id} style={styles.cartCard}>
+                  <View key={item.cartKey} style={styles.cartCard}>
                     <View style={styles.cartTop}>
                       <Text style={styles.cartName} numberOfLines={2}>
                         {item.name}
@@ -314,19 +355,19 @@ export default function POSScreen({ navigation }) {
                     <Text style={styles.productMeta}>{formatCurrency(item.price)} each</Text>
                     <View style={styles.cartActions}>
                       <View style={styles.qtyGroup}>
-                        <Pressable onPress={() => changeQty(item.id, -1)} style={styles.qtyBtn}>
+                        <Pressable onPress={() => changeQty(item.cartKey, -1)} style={styles.qtyBtn}>
                           <Text style={styles.qtyBtnText}>−</Text>
                         </Pressable>
                         <Text style={styles.qty}>{item.quantity}</Text>
                         <Pressable
-                          onPress={() => changeQty(item.id, 1)}
+                          onPress={() => changeQty(item.cartKey, 1)}
                           disabled={item.quantity >= item.stock_quantity}
                           style={styles.qtyBtn}
                         >
                           <Text style={styles.qtyBtnText}>+</Text>
                         </Pressable>
                       </View>
-                      <Pressable onPress={() => changeQty(item.id, -item.quantity)}>
+                      <Pressable onPress={() => changeQty(item.cartKey, -item.quantity)}>
                         <Text style={styles.remove}>Remove</Text>
                       </Pressable>
                     </View>

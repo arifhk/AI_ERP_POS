@@ -58,6 +58,7 @@ export function ThermalReceipt({
   return (
     <div
       id={printRoot ? 'thermal-receipt' : undefined}
+      data-paper
       className="mx-auto box-border w-[80mm] max-w-[80mm] bg-white px-2 py-2 font-mono text-[11px] leading-snug text-black"
     >
       <header className="text-center">

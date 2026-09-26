@@ -6,8 +6,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from auth import get_current_user
 from database import get_session
-from models import Tenant
+from models import Tenant, User
+from rbac import require_super_admin
 
 router = APIRouter()
 
@@ -15,8 +17,11 @@ router = APIRouter()
 class TenantCreate(SQLModel):
     name: str
     slug: str
+    domain: Optional[str] = None
+    subdomain: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+    status: str = "active"
     is_active: bool = True
 
 
@@ -32,8 +37,11 @@ class TenantRead(SQLModel):
     id: int
     name: str
     slug: str
+    domain: Optional[str] = None
+    subdomain: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+    status: str = "active"
     is_active: bool
     created_at: datetime
 
@@ -49,7 +57,9 @@ async def _get_tenant(session: AsyncSession, tenant_id: int) -> Tenant:
 async def create_tenant(
     payload: TenantCreate,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> Tenant:
+    require_super_admin(current_user)
     tenant = Tenant.model_validate(payload)
     session.add(tenant)
     try:
@@ -69,7 +79,9 @@ async def list_tenants(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[Tenant]:
+    require_super_admin(current_user)
     result = await session.exec(select(Tenant).offset(skip).limit(limit).order_by(Tenant.id))
     return list(result.all())
 
@@ -78,7 +90,9 @@ async def list_tenants(
 async def get_tenant(
     tenant_id: int,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> Tenant:
+    require_super_admin(current_user)
     return await _get_tenant(session, tenant_id)
 
 
@@ -87,7 +101,9 @@ async def update_tenant(
     tenant_id: int,
     payload: TenantUpdate,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> Tenant:
+    require_super_admin(current_user)
     tenant = await _get_tenant(session, tenant_id)
     data = payload.model_dump(exclude_unset=True)
     tenant.sqlmodel_update(data)
@@ -108,7 +124,9 @@ async def update_tenant(
 async def delete_tenant(
     tenant_id: int,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> None:
+    require_super_admin(current_user)
     tenant = await _get_tenant(session, tenant_id)
     await session.delete(tenant)
     try:

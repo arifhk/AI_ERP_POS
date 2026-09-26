@@ -1,52 +1,23 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { toast } from 'sonner';
+import { Copy, History, Tag } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
+import { ActionIcon, AddButton, TableActions } from '../../components/TableActions';
 import { LabelPrinter } from '../../components/LabelPrinter';
+import { ApprovalInbox } from '../../components/ApprovalInbox';
+import { BulkProductImport } from '../../components/BulkProductImport';
+import { ProductEditor, cloneCatalogProduct, type CatalogProduct } from '../../components/ProductEditor';
 import { API_BASE, apiFetch } from '../../utils/api';
 
 const Barcode = dynamic(() => import('react-barcode'), { ssr: false });
 
-type Product = {
-  id: number;
-  name: string;
-  barcode: string;
-  price: number;
-  stock_quantity: number;
-  is_active: boolean;
-};
-
-type ProductForm = {
-  name: string;
-  sku: string;
-  price: string;
-  stock_quantity: string;
-};
-
 type EditorState = {
   mode: 'create' | 'edit';
-  product: Product | null;
+  product: CatalogProduct | null;
 };
-
-const emptyForm: ProductForm = {
-  name: '',
-  sku: '',
-  price: '',
-  stock_quantity: '',
-};
-
-function generateSku(existing: Set<string>) {
-  let sku = '';
-  do {
-    const stamp = Date.now().toString().slice(-9);
-    const suffix = Math.floor(Math.random() * 1000)
-      .toString()
-      .padStart(3, '0');
-    sku = `${stamp}${suffix}`;
-  } while (existing.has(sku));
-  return sku;
-}
 
 function stockDisplay(quantity: number) {
   if (quantity <= 0) {
@@ -74,95 +45,98 @@ function formatPrice(price: number) {
   })}`;
 }
 
-function readApiError(payload: unknown, fallback: string) {
-  if (!payload || typeof payload !== 'object' || !('detail' in payload)) {
-    return fallback;
-  }
-  const detail = payload.detail;
-  if (typeof detail === 'string') {
-    return detail;
-  }
-  if (Array.isArray(detail) && detail.length > 0) {
-    const first = detail[0];
-    if (first && typeof first === 'object' && 'msg' in first && typeof first.msg === 'string') {
-      return first.msg;
-    }
-  }
-  return fallback;
+function itemCodeOf(product: CatalogProduct) {
+  return product.item_code || product.design_code || product.barcode;
 }
 
-function ProductActions({
-  onEdit,
-  onPrint,
-}: {
-  onEdit: () => void;
-  onPrint: () => void;
-}) {
-  return (
-    <div className="flex flex-wrap justify-end gap-2">
-      <button
-        type="button"
-        onClick={onEdit}
-        className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
-      >
-        Edit
-      </button>
-      <button
-        type="button"
-        onClick={onPrint}
-        className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
-      >
-        <span aria-hidden="true">🏷️</span>
-        Print Label
-      </button>
-    </div>
-  );
-}
+type AuditEntry = {
+  id: number;
+  user_name: string;
+  action_type: string;
+  changes: Record<string, { old?: unknown; new?: unknown }>;
+  reason?: string | null;
+  method: string;
+  created_at: string;
+};
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [jump, setJump] = useState('1');
+  const [historyProduct, setHistoryProduct] = useState<CatalogProduct | null>(null);
+  const [history, setHistory] = useState<AuditEntry[]>([]);
   const [editor, setEditor] = useState<EditorState | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [form, setForm] = useState<ProductForm>(emptyForm);
-  const [barcodeProduct, setBarcodeProduct] = useState<Product | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [barcodeProduct, setBarcodeProduct] = useState<CatalogProduct | null>(null);
 
-  async function loadProducts() {
-    const response = await apiFetch(`${API_BASE}/products/?limit=200`);
+  async function loadProducts(nextPage = page, search = query) {
+    const params = new URLSearchParams({
+      page: String(nextPage),
+      page_size: '10',
+    });
+    if (search.trim()) {
+      params.set('q', search.trim());
+    }
+    if (statusFilter !== 'all') {
+      params.set('status', statusFilter);
+    }
+    if (categoryFilter) {
+      params.set('category', categoryFilter);
+    }
+    const response = await apiFetch(`${API_BASE}/products/table?${params.toString()}`);
     if (!response.ok) {
       throw new Error('Failed to load products');
     }
-
-    const data: unknown = await response.json();
-    setProducts(Array.isArray(data) ? (data as Product[]) : []);
+    const data = (await response.json()) as {
+      items?: CatalogProduct[];
+      total?: number;
+      page?: number;
+      pages?: number;
+      categories?: string[];
+    };
+    setProducts(Array.isArray(data.items) ? data.items : []);
+    setTotal(data.total ?? 0);
+    setPages(data.pages ?? 1);
+    setPage(data.page ?? nextPage);
+    setJump(String(data.page ?? nextPage));
+    setCategories(data.categories ?? []);
   }
 
   useEffect(() => {
-    let cancelled = false;
+    const preset = new URLSearchParams(window.location.search).get('q');
+    if (preset) {
+      setPage(1);
+      setQuery(preset);
+    }
+  }, []);
 
-    async function initialLoad() {
-      try {
-        await loadProducts();
-      } catch {
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      loadProducts(page, query).catch(() => {
         if (!cancelled) {
           setError('Unable to load products from the server.');
         }
-      } finally {
+      }).finally(() => {
         if (!cancelled) {
           setLoading(false);
         }
-      }
-    }
-
-    initialLoad();
+      });
+    }, 250);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [page, query, statusFilter, categoryFilter]);
 
   useEffect(() => {
     if (!editor) {
@@ -170,125 +144,100 @@ export default function ProductsPage() {
     }
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape' && !submitting) {
+      if (event.key === 'Escape') {
         setEditor(null);
-        setFormError(null);
       }
     }
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [editor, submitting]);
+  }, [editor]);
 
-  const filteredProducts = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    if (!term) {
-      return products;
+  const filteredProducts = products;
+
+  async function openHistory(product: CatalogProduct) {
+    setHistoryProduct(product);
+    setHistory([]);
+    const response = await apiFetch(`${API_BASE}/products/${product.id}/history`);
+    if (!response.ok) {
+      return;
     }
-    return products.filter(
-      (product) =>
-        product.name.toLowerCase().includes(term) || product.barcode.toLowerCase().includes(term),
-    );
-  }, [products, query]);
+    const data: unknown = await response.json();
+    setHistory(Array.isArray(data) ? (data as AuditEntry[]) : []);
+  }
 
   function openCreate() {
-    const sku = generateSku(new Set(products.map((product) => product.barcode)));
-    setForm({ ...emptyForm, sku });
-    setFormError(null);
     setEditor({ mode: 'create', product: null });
   }
 
-  function openEdit(product: Product) {
-    setForm({
-      name: product.name,
-      sku: product.barcode,
-      price: String(product.price),
-      stock_quantity: String(product.stock_quantity),
-    });
-    setFormError(null);
+  function openEdit(product: CatalogProduct) {
     setEditor({ mode: 'edit', product });
   }
 
-  function closeEditor() {
-    if (submitting) {
-      return;
-    }
-    setEditor(null);
-    setFormError(null);
-    setForm(emptyForm);
+  function openClone(product: CatalogProduct) {
+    const taken = new Set(products.map((item) => item.barcode));
+    setEditor({ mode: 'create', product: cloneCatalogProduct(product, taken) });
   }
 
-  function regenerateSku() {
-    const taken = new Set(products.map((product) => product.barcode));
-    if (editor?.product) {
-      taken.delete(editor.product.barcode);
-    }
-    setForm((current) => ({ ...current, sku: generateSku(taken) }));
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!editor) {
+  async function changeProduct(product: CatalogProduct, path: string, init: RequestInit, fallback: string) {
+    const response = await apiFetch(`${API_BASE}/products/${product.id}${path}`, init);
+    if (!response.ok) {
+      toast.error(fallback);
       return;
     }
-
-    setSubmitting(true);
-    setFormError(null);
-
-    const payload = {
-      name: form.name.trim(),
-      barcode: form.sku.trim(),
-      price: Number(form.price),
-      stock_quantity: Number(form.stock_quantity),
-    };
-
+    const payload = (await response.json()) as { pending?: boolean; message?: string };
+    toast.success(payload.pending ? 'Submitted for Admin Approval' : payload.message || 'Updated');
     try {
-      const response =
-        editor.mode === 'create'
-          ? await apiFetch(`${API_BASE}/products/`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                tenant_id: 1,
-                branch_id: 1,
-                is_active: true,
-                ...payload,
-              }),
-            })
-          : await apiFetch(`${API_BASE}/products/${editor.product?.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            });
-
-      if (!response.ok) {
-        let message = editor.mode === 'create' ? 'Could not create the product.' : 'Could not update the product.';
-        try {
-          message = readApiError(await response.json(), message);
-        } catch {
-          // Keep the generic message if the error body is not JSON.
-        }
-        throw new Error(message);
-      }
-
-      setEditor(null);
-      setForm(emptyForm);
-      await loadProducts();
-      setNotice(editor.mode === 'create' ? 'Product added successfully.' : 'Product updated successfully.');
-    } catch (caught) {
-      setFormError(
-        caught instanceof Error
-          ? caught.message
-          : editor.mode === 'create'
-            ? 'Could not create the product.'
-            : 'Could not update the product.',
-      );
-    } finally {
-      setSubmitting(false);
+      await loadProducts(page, query);
+    } catch {
+      setError('Unable to load products from the server.');
     }
   }
 
-  const skuValue = form.sku.trim();
+  function toggleProduct(product: CatalogProduct, field: 'is_active' | 'is_hidden', value: boolean) {
+    void changeProduct(
+      product,
+      '/flags',
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: value }) },
+      'Could not update this product.',
+    );
+  }
+
+  function productActions(product: CatalogProduct) {
+    return (
+      <TableActions
+        active={product.is_active}
+        hidden={product.is_hidden === true}
+        onEdit={() => openEdit(product)}
+        onDelete={() => void changeProduct(product, '', { method: 'DELETE' }, 'Could not delete this product.')}
+        onToggleActive={() => toggleProduct(product, 'is_active', !product.is_active)}
+        onToggleHidden={() => toggleProduct(product, 'is_hidden', product.is_hidden !== true)}
+        extra={
+          <>
+            <ActionIcon label="Clone Item" className="hover:bg-slate-100 hover:text-slate-800" onClick={() => openClone(product)}>
+              <Copy className="h-4 w-4" strokeWidth={1.5} />
+            </ActionIcon>
+            <ActionIcon label="Print Label" className="hover:bg-slate-100 hover:text-slate-800" onClick={() => setBarcodeProduct(product)}>
+              <Tag className="h-4 w-4" strokeWidth={1.5} />
+            </ActionIcon>
+            <ActionIcon label="View History" className="hover:bg-slate-100 hover:text-slate-800" onClick={() => void openHistory(product)}>
+              <History className="h-4 w-4" strokeWidth={1.5} />
+            </ActionIcon>
+          </>
+        }
+      />
+    );
+  }
+
+  async function handleSaved(message: string) {
+    setEditor(null);
+    setNotice(message);
+    try {
+      await loadProducts(page, query);
+    } catch {
+      setError('Unable to load products from the server.');
+    }
+  }
 
   return (
     <>
@@ -298,8 +247,11 @@ export default function ProductsPage() {
         <input
           type="search"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search name or SKU..."
+          onChange={(event) => {
+            setPage(1);
+            setQuery(event.target.value);
+          }}
+          placeholder="Search name or item code..."
           className="w-full min-w-0 max-w-md rounded-md border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
       }
@@ -311,14 +263,19 @@ export default function ProductsPage() {
                 Manage catalog items, SKUs, pricing, and stock.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={openCreate}
-              className="rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-            >
-              Add New Product
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setImportOpen(true)}
+                className="rounded-md border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                Bulk Import
+              </button>
+              <AddButton label="Add Product" onClick={openCreate} />
+            </div>
           </div>
+
+          <ApprovalInbox />
 
           {notice ? (
             <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
@@ -344,13 +301,53 @@ export default function ProductsPage() {
                 </div>
               )}
 
+              <div className="mb-3 grid gap-2 md:grid-cols-[1fr_180px_180px]">
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => {
+                    setPage(1);
+                    setQuery(event.target.value);
+                  }}
+                  placeholder="Search name or item code..."
+                  className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                />
+                <select
+                  value={statusFilter}
+                  onChange={(event) => {
+                    setPage(1);
+                    setStatusFilter(event.target.value);
+                  }}
+                  className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="all">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+                <select
+                  value={categoryFilter}
+                  onChange={(event) => {
+                    setPage(1);
+                    setCategoryFilter(event.target.value);
+                  }}
+                  className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">All categories</option>
+                  {categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="hidden overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm md:block">
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Name</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">SKU</th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Item Code</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Price</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Stock</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">Status</th>
@@ -373,7 +370,7 @@ export default function ProductsPage() {
                               {product.name}
                             </td>
                             <td className="whitespace-nowrap px-6 py-4 font-mono text-sm text-gray-600">
-                              {product.barcode}
+                              {itemCodeOf(product)}
                             </td>
                             <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-900">
                               {formatPrice(product.price)}
@@ -391,10 +388,7 @@ export default function ProductsPage() {
                               </span>
                             </td>
                             <td className="whitespace-nowrap px-6 py-4 text-right">
-                              <ProductActions
-                                onEdit={() => openEdit(product)}
-                                onPrint={() => setBarcodeProduct(product)}
-                              />
+                              {productActions(product)}
                             </td>
                           </tr>
                         ))
@@ -420,7 +414,7 @@ export default function ProductsPage() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <h2 className="truncate text-base font-semibold text-gray-900">{product.name}</h2>
-                          <p className="mt-1 font-mono text-xs text-gray-500">SKU {product.barcode}</p>
+                          <p className="mt-1 font-mono text-xs text-gray-500">Item Code {itemCodeOf(product)}</p>
                         </div>
                         <span
                           className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -448,173 +442,121 @@ export default function ProductsPage() {
                         />
                       </div>
                       <div className="mt-3">
-                        <ProductActions
-                          onEdit={() => openEdit(product)}
-                          onPrint={() => setBarcodeProduct(product)}
-                        />
+                        {productActions(product)}
                       </div>
                     </article>
                   ))
                 )}
               </div>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm">
+                <p className="text-gray-600">
+                  Page {page} of {pages} · {total} products
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" disabled={page <= 1} onClick={() => setPage(1)} className="rounded border border-gray-200 px-2.5 py-1.5 font-semibold disabled:opacity-40">
+                    First
+                  </button>
+                  <button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="rounded border border-gray-200 px-2.5 py-1.5 font-semibold disabled:opacity-40">
+                    Previous
+                  </button>
+                  <button type="button" disabled={page >= pages} onClick={() => setPage((current) => Math.min(pages, current + 1))} className="rounded border border-gray-200 px-2.5 py-1.5 font-semibold disabled:opacity-40">
+                    Next
+                  </button>
+                  <button type="button" disabled={page >= pages} onClick={() => setPage(pages)} className="rounded border border-gray-200 px-2.5 py-1.5 font-semibold disabled:opacity-40">
+                    Last
+                  </button>
+                  <form
+                    className="flex items-center gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const next = Number(jump);
+                      if (Number.isInteger(next) && next >= 1 && next <= pages) {
+                        setPage(next);
+                      }
+                    }}
+                  >
+                    <label className="text-gray-600" htmlFor="jump-page">
+                      Jump to page
+                    </label>
+                    <input
+                      id="jump-page"
+                      value={jump}
+                      onChange={(event) => setJump(event.target.value)}
+                      inputMode="numeric"
+                      className="w-16 rounded border border-gray-300 px-2 py-1.5"
+                    />
+                    <button type="submit" className="rounded border border-gray-200 px-2.5 py-1.5 font-semibold">
+                      Go
+                    </button>
+                  </form>
+                </div>
+              </div>
             </>
           )}
     </AppShell>
 
+      {importOpen ? (
+        <BulkProductImport
+          onClose={() => setImportOpen(false)}
+          onImported={(message) => {
+            setNotice(message);
+            void loadProducts().catch(() => setError('Unable to load products from the server.'));
+          }}
+        />
+      ) : null}
+
       {editor ? (
-        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="product-form-title">
-          <button
-            type="button"
-            aria-label="Close product form"
-            className="absolute inset-0 bg-black/50"
-            onClick={closeEditor}
-          />
-          <div className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-white shadow-2xl">
-            <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
-              <div>
-                <h2 id="product-form-title" className="text-lg font-semibold text-gray-900">
-                  {editor.mode === 'create' ? 'Add New Product' : 'Edit Product'}
-                </h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Name, SKU, price, and stock. The barcode is generated from the SKU.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeEditor}
-                disabled={submitting}
-                className="rounded-md px-2 py-1 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-60"
-              >
-                Close
-              </button>
-            </div>
-
-            <form onSubmit={(event) => void handleSubmit(event)} className="flex min-h-0 flex-1 flex-col">
-              <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-                <div>
-                  <label htmlFor="product-name" className="mb-1 block text-sm font-medium text-gray-700">
-                    Name
-                  </label>
-                  <input
-                    id="product-name"
-                    required
-                    autoFocus
-                    value={form.name}
-                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="e.g. Espresso"
-                  />
-                </div>
-                <div>
-                  <div className="mb-1 flex items-center justify-between gap-3">
-                    <label htmlFor="product-sku" className="block text-sm font-medium text-gray-700">
-                      SKU
-                    </label>
-                    <button
-                      type="button"
-                      onClick={regenerateSku}
-                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-500"
-                    >
-                      Generate SKU
-                    </button>
-                  </div>
-                  <input
-                    id="product-sku"
-                    required
-                    maxLength={80}
-                    value={form.sku}
-                    onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="e.g. 890123456789"
-                  />
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label htmlFor="product-price" className="mb-1 block text-sm font-medium text-gray-700">
-                      Price
-                    </label>
-                    <input
-                      id="product-price"
-                      required
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={form.price}
-                      onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))}
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="product-stock" className="mb-1 block text-sm font-medium text-gray-700">
-                      Stock
-                    </label>
-                    <input
-                      id="product-stock"
-                      required
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={form.stock_quantity}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, stock_quantity: event.target.value }))
-                      }
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Barcode</p>
-                  {skuValue ? (
-                    <div className="overflow-hidden rounded-md bg-white px-2 py-3 [&_svg]:h-auto [&_svg]:max-w-full">
-                      <Barcode
-                        value={skuValue}
-                        format="CODE128"
-                        width={1.4}
-                        height={56}
-                        fontSize={12}
-                        margin={0}
-                        displayValue
-                        background="#ffffff"
-                        lineColor="#111827"
-                      />
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-500">Enter a SKU to generate a barcode.</p>
-                  )}
-                </div>
-
-                {formError ? (
-                  <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>
-                ) : null}
-              </div>
-
-              <div className="flex justify-end gap-3 border-t border-gray-100 px-5 py-4">
-                <button
-                  type="button"
-                  onClick={closeEditor}
-                  disabled={submitting}
-                  className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
-                >
-                  {submitting ? 'Saving...' : editor.mode === 'create' ? 'Save Product' : 'Update Product'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <ProductEditor
+          key={editor.product?.id ?? 'new'}
+          mode={editor.mode}
+          product={editor.product}
+          takenSkus={new Set(products.map((product) => product.barcode))}
+          onClose={() => setEditor(null)}
+          onSaved={(message) => void handleSaved(message)}
+        />
       ) : null}
 
       {barcodeProduct ? (
         <LabelPrinter product={barcodeProduct} onClose={() => setBarcodeProduct(null)} />
+      ) : null}
+
+      {historyProduct ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setHistoryProduct(null)}>
+          <div className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">History</h2>
+                <p className="text-sm text-gray-500">{historyProduct.name}</p>
+              </div>
+              <button type="button" onClick={() => setHistoryProduct(null)} className="text-sm font-semibold text-gray-500">
+                Close
+              </button>
+            </div>
+            {history.length === 0 ? (
+              <p className="text-sm text-gray-500">No recorded changes for this product yet.</p>
+            ) : (
+              <ol className="space-y-4 border-l border-gray-200 pl-4">
+                {history.map((entry) => (
+                  <li key={entry.id} className="relative">
+                    <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-indigo-600" />
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">{entry.action_type}</p>
+                    <ul className="mt-1 space-y-1 text-sm text-gray-800">
+                      {Object.entries(entry.changes ?? {}).map(([field, change]) => (
+                        <li key={field}>
+                          Changed {field.replaceAll('_', ' ')} from {String(change?.old ?? 'empty')} to {String(change?.new ?? 'empty')} on{' '}
+                          {new Date(entry.created_at).toLocaleString()} by {entry.user_name || 'Unknown user'}
+                        </li>
+                      ))}
+                    </ul>
+                    {entry.reason ? <p className="mt-1 text-xs text-gray-500">Reason: {entry.reason}</p> : null}
+                    <p className="mt-1 text-xs text-gray-400">{entry.method}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </div>
       ) : null}
     </>
   );
