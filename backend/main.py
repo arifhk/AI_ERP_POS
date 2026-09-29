@@ -54,12 +54,15 @@ app = FastAPI(
 
 from fastapi.middleware.cors import CORSMiddleware
 
+_cors_origins: list[str] = []
+for _origin in ("https://ai-erp-pos.vercel.app", "http://localhost:3000", *cors_origins()):
+    if _origin not in _cors_origins:
+        _cors_origins.append(_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://ai-erp-pos.vercel.app",
-        *cors_origins(),
-    ],
+    allow_origins=_cors_origins,
+    allow_origin_regex=r"https://ai-erp-pos[\w-]*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

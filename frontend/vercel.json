@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/pos-api/:path*",
-      "destination": "https://YOUR-RENDER-SERVICE.onrender.com/:path*"
+      "destination": "https://ai-erp-pos-api.onrender.com/:path*"
     }
   ]
 }

@@ -1,7 +1,13 @@
-export const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(
-  /\/$/,
-  '',
-);
+function resolveApiBase() {
+  const configured = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '');
+  const pointsAtThisSite = !configured || configured === 'https://ai-erp-pos.vercel.app';
+  if (pointsAtThisSite) {
+    return process.env.NODE_ENV === 'production' ? '/pos-api' : 'http://localhost:8000';
+  }
+  return configured;
+}
+
+export const API_BASE = resolveApiBase();
 
 export function authHeaders(init?: HeadersInit): Headers {
   const headers = new Headers(init);
