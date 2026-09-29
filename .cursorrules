@@ -1,0 +1,22 @@
+# Project Context
+Project Name: AI_ERP_POS
+Type: Full-stack ERP & POS System
+
+# Tech Stack (Backend)
+- Framework: FastAPI (Python)
+- Database & ORM: Supabase (PostgreSQL), SQLModel, SQLAlchemy
+- Migrations: Alembic
+- Server: Uvicorn
+
+# Current Status
+- Database connection via Supabase connection pooling (Session pooler IPv4) is successfully configured.
+- Alembic is set up and the initial schema migration is completed.
+- Core tables (tenants, branches, users, products, categories, orders, expenses, brand_masters, etc.) are already successfully created in the Supabase database.
+- GitHub sync is fixed, node_modules removed from tracking, and the repository is up-to-date.
+
+# AI Assistant Guidelines
+- Always write clean, production-ready, and efficient Python code.
+- Strictly use `SQLModel` for database models and queries.
+- Before suggesting any new database model, check the existing schema in `backend/models.py`.
+- Always assume the development environment is Windows (PowerShell) and we are using a Python virtual environment (`venv`).
+- Next steps will involve building API routes for the created tables and integrating them with the frontend.
