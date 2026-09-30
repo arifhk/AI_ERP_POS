@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '../../../components/AppShell';
 import { API_BASE, apiFetch } from '../../../utils/api';
+import { useApi } from '../../../utils/query';
 import { getStoredRole, isSystemOwner } from '../../../utils/auth';
 
 type ManagedUser = {
@@ -26,7 +27,8 @@ const ROLES = [
 export default function SystemUsersPage() {
   const router = useRouter();
   const [allowed, setAllowed] = useState(false);
-  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const { data, error: loadError, mutate } = useApi<ManagedUser[]>(allowed ? `${API_BASE}/system/users` : null);
+  const users = data ?? [];
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [passwordFor, setPasswordFor] = useState<ManagedUser | null>(null);
@@ -44,25 +46,16 @@ export default function SystemUsersPage() {
     setAllowed(true);
   }, [router]);
 
-  async function loadUsers() {
-    const response = await apiFetch(`${API_BASE}/system/users`);
-    if (response.status === 403) {
+  useEffect(() => {
+    if (!loadError) {
+      return;
+    }
+    if (loadError.message.includes('403')) {
       router.replace('/');
       return;
     }
-    if (!response.ok) {
-      throw new Error('Could not load users.');
-    }
-    const data: unknown = await response.json();
-    setUsers(Array.isArray(data) ? (data as ManagedUser[]) : []);
-  }
-
-  useEffect(() => {
-    if (!allowed) {
-      return;
-    }
-    loadUsers().catch(() => setError('Could not load users.'));
-  }, [allowed]);
+    setError('Could not load users.');
+  }, [loadError, router]);
 
   async function saveRole(user: ManagedUser, role: string) {
     setNotice(null);
@@ -78,7 +71,7 @@ export default function SystemUsersPage() {
       return;
     }
     setNotice(`${user.email} is now ${role.replace(/_/g, ' ')}.`);
-    await loadUsers();
+    await mutate();
   }
 
   async function savePassword(event: FormEvent) {
@@ -130,7 +123,7 @@ export default function SystemUsersPage() {
     }
     setOwnerPassword('');
     setNotice(body.message || 'Ownership transferred.');
-    await loadUsers();
+    await mutate();
   }
 
   if (!allowed) {

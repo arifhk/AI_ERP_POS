@@ -9,6 +9,14 @@ function resolveApiBase() {
 
 export const API_BASE = resolveApiBase();
 
+let clientNavigate = (href: string) => {
+  window.location.assign(href);
+};
+
+export function setClientNavigator(navigate: (href: string) => void) {
+  clientNavigate = navigate;
+}
+
 export function authHeaders(init?: HeadersInit): Headers {
   const headers = new Headers(init);
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
@@ -23,9 +31,13 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
 
   const response = await fetch(input, { ...init, headers });
 
-  if (response.status === 401 && typeof window !== 'undefined') {
+  if (
+    response.status === 401 &&
+    typeof window !== 'undefined' &&
+    window.location.pathname !== '/login'
+  ) {
     localStorage.clear();
-    window.location.href = '/login';
+    clientNavigate('/login');
   }
 
   return response;

@@ -18,7 +18,8 @@ import {
   type ReturnRow,
 } from '../components/dashboard/metrics';
 import { DataTable, WidgetShell, type DragHandleProps } from '../components/dashboard/WidgetShell';
-import { API_BASE, apiFetch } from '../utils/api';
+import { API_BASE } from '../utils/api';
+import { useApi } from '../utils/query';
 import { getStoredRole, isAdminRole } from '../utils/auth';
 
 type ProductRow = {
@@ -28,78 +29,38 @@ type ProductRow = {
 
 export default function Dashboard() {
   const router = useRouter();
-  const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [returns, setReturns] = useState<ReturnRow[]>([]);
-  const [customers, setCustomers] = useState<CustomerRow[]>([]);
-  const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
-  const [audits, setAudits] = useState<AuditRow[]>([]);
-  const [categories, setCategories] = useState<Map<number, string>>(new Map());
+  const isAdmin = isAdminRole(getStoredRole());
+  const ordersQuery = useApi<OrderRow[]>(isAdmin ? `${API_BASE}/orders/` : null);
+  const returnsQuery = useApi<ReturnRow[]>(isAdmin ? `${API_BASE}/returns/` : null);
+  const customersQuery = useApi<CustomerRow[]>(isAdmin ? `${API_BASE}/customers/` : null);
+  const productsQuery = useApi<ProductRow[]>(isAdmin ? `${API_BASE}/products/?limit=200` : null);
+  const approvalsQuery = useApi<ApprovalRow[]>(isAdmin ? `${API_BASE}/approvals/` : null);
+  const auditsQuery = useApi<AuditRow[]>(isAdmin ? `${API_BASE}/audit-logs/?limit=20` : null);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const isAdmin = isAdminRole(getStoredRole());
-    if (!isAdmin) {
-      router.push('/pos');
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadDashboard() {
-      try {
-        const [customersRes, ordersRes, returnsRes, productsRes, approvalsRes, auditsRes] = await Promise.all([
-          apiFetch(`${API_BASE}/customers/`),
-          apiFetch(`${API_BASE}/orders/`),
-          apiFetch(`${API_BASE}/returns/`),
-          apiFetch(`${API_BASE}/products/?limit=200`),
-          apiFetch(`${API_BASE}/approvals/`),
-          apiFetch(`${API_BASE}/audit-logs/?limit=20`),
-        ]);
-        if (!customersRes.ok || !ordersRes.ok || !returnsRes.ok || !productsRes.ok) {
-          throw new Error('Failed to load dashboard data');
-        }
-        const customerRows: unknown = await customersRes.json();
-        const orderRows: unknown = await ordersRes.json();
-        const returnRows: unknown = await returnsRes.json();
-        const productRows: unknown = await productsRes.json();
-        const approvalRows: unknown = approvalsRes.ok ? await approvalsRes.json() : [];
-        const auditRows: unknown = auditsRes.ok ? await auditsRes.json() : [];
-        if (cancelled) {
-          return;
-        }
-        setCustomers(Array.isArray(customerRows) ? (customerRows as CustomerRow[]) : []);
-        setOrders(Array.isArray(orderRows) ? (orderRows as OrderRow[]) : []);
-        setReturns(Array.isArray(returnRows) ? (returnRows as ReturnRow[]) : []);
-        setApprovals(Array.isArray(approvalRows) ? (approvalRows as ApprovalRow[]) : []);
-        setAudits(Array.isArray(auditRows) ? (auditRows as AuditRow[]) : []);
-        const nextCategories = new Map<number, string>();
-        if (Array.isArray(productRows)) {
-          for (const row of productRows as ProductRow[]) {
-            if (row && typeof row.id === 'number') {
-              nextCategories.set(row.id, row.category?.trim() || 'Uncategorized');
-            }
-          }
-        }
-        setCategories(nextCategories);
-        setError(null);
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load data from the server.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+  const orders = ordersQuery.data ?? [];
+  const returns = returnsQuery.data ?? [];
+  const customers = customersQuery.data ?? [];
+  const approvals = approvalsQuery.data ?? [];
+  const audits = auditsQuery.data ?? [];
+  const categories = useMemo(() => {
+    const nextCategories = new Map<number, string>();
+    for (const row of productsQuery.data ?? []) {
+      if (row && typeof row.id === 'number') {
+        nextCategories.set(row.id, row.category?.trim() || 'Uncategorized');
       }
     }
+    return nextCategories;
+  }, [productsQuery.data]);
+  const loading = isAdmin && [ordersQuery, returnsQuery, customersQuery, productsQuery].some((query) => query.isLoading && query.data === undefined);
+  const error = [ordersQuery, returnsQuery, customersQuery, productsQuery].some((query) => query.error)
+    ? 'Unable to load data from the server.'
+    : null;
 
-    loadDashboard();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
+  useEffect(() => {
+    if (!isAdmin) {
+      router.push('/pos');
+    }
+  }, [isAdmin, router]);
 
   const view = useMemo(
     () => buildDashboard({ orders, returns, customers, categories, dateFilter, approvals, audits }),

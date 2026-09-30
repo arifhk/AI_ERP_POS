@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
 import { Copy, History, Tag } from 'lucide-react';
@@ -11,6 +12,7 @@ import { ApprovalInbox } from '../../components/ApprovalInbox';
 import { BulkProductImport } from '../../components/BulkProductImport';
 import { ProductEditor, cloneCatalogProduct, type CatalogProduct } from '../../components/ProductEditor';
 import { API_BASE, apiFetch } from '../../utils/api';
+import { useApi } from '../../utils/query';
 
 const Barcode = dynamic(() => import('react-barcode'), { ssr: false });
 
@@ -59,32 +61,29 @@ type AuditEntry = {
   created_at: string;
 };
 
+type ProductTable = {
+  items?: CatalogProduct[];
+  total?: number;
+  page?: number;
+  pages?: number;
+  categories?: string[];
+};
+
 export default function ProductsPage() {
-  const [products, setProducts] = useState<CatalogProduct[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const searchParams = useSearchParams();
   const [notice, setNotice] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => searchParams.get('q') ?? '');
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('');
-  const [categories, setCategories] = useState<string[]>([]);
   const [page, setPage] = useState(1);
-  const [pages, setPages] = useState(1);
-  const [total, setTotal] = useState(0);
   const [jump, setJump] = useState('1');
-  const [historyProduct, setHistoryProduct] = useState<CatalogProduct | null>(null);
-  const [history, setHistory] = useState<AuditEntry[]>([]);
-  const [editor, setEditor] = useState<EditorState | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
-  const [barcodeProduct, setBarcodeProduct] = useState<CatalogProduct | null>(null);
-
-  async function loadProducts(nextPage = page, search = query) {
+  const tableKey = useMemo(() => {
     const params = new URLSearchParams({
-      page: String(nextPage),
+      page: String(page),
       page_size: '10',
     });
-    if (search.trim()) {
-      params.set('q', search.trim());
+    if (query.trim()) {
+      params.set('q', query.trim());
     }
     if (statusFilter !== 'all') {
       params.set('status', statusFilter);
@@ -92,51 +91,28 @@ export default function ProductsPage() {
     if (categoryFilter) {
       params.set('category', categoryFilter);
     }
-    const response = await apiFetch(`${API_BASE}/products/table?${params.toString()}`);
-    if (!response.ok) {
-      throw new Error('Failed to load products');
-    }
-    const data = (await response.json()) as {
-      items?: CatalogProduct[];
-      total?: number;
-      page?: number;
-      pages?: number;
-      categories?: string[];
-    };
-    setProducts(Array.isArray(data.items) ? data.items : []);
-    setTotal(data.total ?? 0);
-    setPages(data.pages ?? 1);
-    setPage(data.page ?? nextPage);
-    setJump(String(data.page ?? nextPage));
-    setCategories(data.categories ?? []);
-  }
+    return `${API_BASE}/products/table?${params.toString()}`;
+  }, [categoryFilter, page, query, statusFilter]);
+  const { data, error: loadError, isLoading, mutate } = useApi<ProductTable>(tableKey);
+  const products = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const pages = data?.pages ?? 1;
+  const categories = data?.categories ?? [];
+  const loading = isLoading && !data;
+  const error = loadError ? 'Unable to load products from the server.' : null;
+  const [historyProduct, setHistoryProduct] = useState<CatalogProduct | null>(null);
+  const [history, setHistory] = useState<AuditEntry[]>([]);
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [barcodeProduct, setBarcodeProduct] = useState<CatalogProduct | null>(null);
 
   useEffect(() => {
-    const preset = new URLSearchParams(window.location.search).get('q');
+    const preset = searchParams.get('q');
     if (preset) {
       setPage(1);
       setQuery(preset);
     }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      loadProducts(page, query).catch(() => {
-        if (!cancelled) {
-          setError('Unable to load products from the server.');
-        }
-      }).finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [page, query, statusFilter, categoryFilter]);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!editor) {
@@ -188,9 +164,9 @@ export default function ProductsPage() {
     const payload = (await response.json()) as { pending?: boolean; message?: string };
     toast.success(payload.pending ? 'Submitted for Admin Approval' : payload.message || 'Updated');
     try {
-      await loadProducts(page, query);
+      await mutate();
     } catch {
-      setError('Unable to load products from the server.');
+      toast.error('Unable to load products from the server.');
     }
   }
 
@@ -233,9 +209,9 @@ export default function ProductsPage() {
     setEditor(null);
     setNotice(message);
     try {
-      await loadProducts(page, query);
+      await mutate();
     } catch {
-      setError('Unable to load products from the server.');
+      toast.error('Unable to load products from the server.');
     }
   }
 
@@ -501,7 +477,7 @@ export default function ProductsPage() {
           onClose={() => setImportOpen(false)}
           onImported={(message) => {
             setNotice(message);
-            void loadProducts().catch(() => setError('Unable to load products from the server.'));
+            void mutate().catch(() => toast.error('Unable to load products from the server.'));
           }}
         />
       ) : null}

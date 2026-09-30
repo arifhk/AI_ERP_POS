@@ -22,6 +22,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { getStoredRole, isAdminRole, isPlatformRole, isSystemOwner } from '../utils/auth';
+import { prefetchRoute } from '../utils/query';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
 const NAV_LINKS = [
@@ -108,7 +109,10 @@ export function Sidebar({ active, className = '', collapsed = false, onToggle, o
             <Link
               key={link.key}
               href={link.href}
+              prefetch
               title={link.label}
+              onMouseEnter={() => prefetchRoute(link.href)}
+              onFocus={() => prefetchRoute(link.href)}
               onClick={onNavigate}
               className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors duration-200 ${
                 isActive ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100'
@@ -125,7 +129,10 @@ export function Sidebar({ active, className = '', collapsed = false, onToggle, o
         {showSettings ? (
           <Link
             href="/settings"
+            prefetch
             title="Settings"
+            onMouseEnter={() => prefetchRoute('/settings')}
+            onFocus={() => prefetchRoute('/settings')}
             onClick={onNavigate}
             className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100 ${
               active === 'settings' ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300' : ''

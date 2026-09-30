@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell, PageHeading } from '../../components/AppShell';
-import { API_BASE, apiFetch } from '../../utils/api';
+import { API_BASE } from '../../utils/api';
+import { useApi } from '../../utils/query';
 import { getStoredRole, isAdminRole } from '../../utils/auth';
 
 type Customer = {
@@ -45,44 +46,17 @@ function parseCustomers(payload: unknown): Customer[] {
 
 export default function CustomersPage() {
   const router = useRouter();
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const isAdmin = isAdminRole(getStoredRole());
+  const { data, error: loadError, isLoading } = useApi<unknown>(isAdmin ? `${API_BASE}/customers/` : null);
+  const customers = parseCustomers(data);
+  const loading = isAdmin && isLoading && data === undefined;
+  const error = loadError ? 'Unable to load customers from the server.' : null;
 
   useEffect(() => {
-    if (!isAdminRole(getStoredRole())) {
+    if (!isAdmin) {
       router.push('/pos');
-      return;
     }
-
-    let cancelled = false;
-
-    async function loadCustomers() {
-      try {
-        const response = await apiFetch(`${API_BASE}/customers/`);
-        if (!response.ok) {
-          throw new Error('Failed to load customers');
-        }
-        const data: unknown = await response.json();
-        if (!cancelled) {
-          setCustomers(parseCustomers(data));
-        }
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load customers from the server.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadCustomers();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
+  }, [isAdmin, router]);
 
   const ranked = useMemo(
     () => [...customers].sort((a, b) => b.total_spent - a.total_spent),

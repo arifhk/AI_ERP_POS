@@ -11,6 +11,7 @@ import {
 } from '../../components/ThermalReceipt';
 import { AppShell } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
+import { useApi } from '../../utils/query';
 import { printWithMode } from '../../utils/print';
 
 type PosVariant = {
@@ -107,12 +108,13 @@ type CartItem = Sellable & {
 };
 
 export default function PosPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const { data, error: loadError, isLoading, mutate } = useApi<Product[]>(`${API_BASE}/products/`);
+  const products = (data ?? []).filter((product) => product.is_active && !product.is_hidden);
+  const loading = isLoading && !data;
+  const error = loadError ? 'Unable to load products from the server.' : null;
   const [cart, setCart] = useState<CartItem[]>([]);
   const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(true);
   const [checkingOut, setCheckingOut] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [customerPhone, setCustomerPhone] = useState('');
@@ -120,44 +122,6 @@ export default function PosPage() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const productsRef = useRef(products);
   productsRef.current = products;
-
-  async function loadProducts() {
-    const response = await apiFetch(`${API_BASE}/products/`);
-    if (!response.ok) {
-      throw new Error('Failed to load products');
-    }
-
-    const data: unknown = await response.json();
-    const list = Array.isArray(data) ? (data as Product[]) : [];
-    setProducts(list.filter((product) => product.is_active && !product.is_hidden));
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialLoad() {
-      try {
-        await loadProducts();
-        if (cancelled) {
-          return;
-        }
-        setError(null);
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load products from the server.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    initialLoad();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const filteredProducts = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -365,7 +329,7 @@ export default function PosPage() {
       setCart([]);
       setCustomerPhone('');
       setCartOpen(false);
-      await loadProducts();
+      await mutate();
     } catch (caught) {
       const message =
         caught instanceof Error ? caught.message : 'Could not place the order.';

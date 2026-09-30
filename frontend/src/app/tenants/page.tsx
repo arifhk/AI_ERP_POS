@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { AppShell, PageHeading } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
+import { useApi } from '../../utils/query';
 
 type Tenant = {
   id: number;
@@ -27,45 +28,14 @@ function parseApiError(detail: unknown, fallback: string) {
 }
 
 export default function TenantsPage() {
-  const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error: loadError, isLoading, mutate } = useApi<Tenant[]>(`${API_BASE}/tenants/`);
+  const tenants = data ?? [];
+  const loading = isLoading && !data;
+  const error = loadError ? 'Unable to load tenants from the server.' : null;
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
-
-  async function loadTenants() {
-    const response = await apiFetch(`${API_BASE}/tenants/`);
-    if (!response.ok) {
-      throw new Error('Failed to load tenants');
-    }
-    const data: unknown = await response.json();
-    setTenants(Array.isArray(data) ? (data as Tenant[]) : []);
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialLoad() {
-      try {
-        await loadTenants();
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load tenants from the server.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    initialLoad();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   function openModal() {
     setForm(emptyForm);
@@ -111,7 +81,7 @@ export default function TenantsPage() {
 
       setModalOpen(false);
       setForm(emptyForm);
-      await loadTenants();
+      await mutate();
     } catch (caught) {
       setFormError(caught instanceof Error ? caught.message : 'Could not create the tenant.');
     } finally {

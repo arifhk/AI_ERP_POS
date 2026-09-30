@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Camera } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell, PageHeading } from '../../components/AppShell';
 import { PosCameraScanner } from '../../components/PosCameraScanner';
 import { useUsbBarcodeScanner } from '../../hooks/useUsbBarcodeScanner';
 import { API_BASE, apiFetch } from '../../utils/api';
+import { useApi } from '../../utils/query';
 
 type Variant = {
   id: number;
@@ -79,9 +80,10 @@ function formatPurchaseDate(value: string) {
 export default function PurchasesPage() {
   const scanRef = useRef<HTMLInputElement>(null);
   const productRef = useRef<LookupProduct | null>(null);
-  const [purchases, setPurchases] = useState<Purchase[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error: loadError, isLoading, mutate } = useApi<Purchase[]>(`${API_BASE}/purchases/`);
+  const purchases = data ?? [];
+  const loading = isLoading && !data;
+  const error = loadError ? 'Unable to load stock entries from the server.' : null;
   const [scanCode, setScanCode] = useState('');
   const [lookingUp, setLookingUp] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -118,38 +120,6 @@ export default function PurchasesPage() {
       },
     ];
   }, [product, variants]);
-
-  async function loadPurchases() {
-    const response = await apiFetch(`${API_BASE}/purchases/`);
-    if (!response.ok) {
-      throw new Error('Failed to load purchases');
-    }
-    const data: unknown = await response.json();
-    setPurchases(Array.isArray(data) ? (data as Purchase[]) : []);
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialLoad() {
-      try {
-        await loadPurchases();
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load stock entries from the server.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    initialLoad();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function lookupCode(raw: string, { increment } = { increment: true }) {
     const code = raw.trim();
@@ -290,7 +260,7 @@ export default function PurchasesPage() {
       setCostPrice('');
       setDate(todayInputValue());
       setScanCode('');
-      await loadPurchases();
+      await mutate();
       scanRef.current?.focus();
     } catch (caught) {
       toast.error(caught instanceof Error ? caught.message : 'Could not receive stock.');

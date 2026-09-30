@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { AppShell } from './AppShell';
 import { MasterDataTable, type MasterStatus } from './MasterDataTable';
 import { API_BASE, apiFetch } from '../utils/api';
+import { prefetchRoute, useApi } from '../utils/query';
 
 type EntityType = 'category' | 'brand';
 
@@ -43,23 +44,12 @@ export function MasterEntityManager({
   title: string;
   description: string;
 }) {
-  const [rows, setRows] = useState<MasterRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editor, setEditor] = useState<{ mode: 'create' | 'update'; id?: number; name: string } | null>(null);
-  const [shown, setShown] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  async function load() {
-    const [catalogRes, approvalRes] = await Promise.all([
-      apiFetch(`${API_BASE}/masters/catalog`),
-      apiFetch(`${API_BASE}/approvals/`),
-    ]);
-    if (!catalogRes.ok) {
-      throw new Error('Failed to load records');
-    }
-    const catalog = (await catalogRes.json()) as { categories?: { id: number; name: string; is_active?: boolean; is_hidden?: boolean }[]; brands?: { id: number; name: string; is_active?: boolean; is_hidden?: boolean }[] };
-    const approvalPayload: unknown = approvalRes.ok ? await approvalRes.json() : [];
-    const approvals = Array.isArray(approvalPayload) ? (approvalPayload as Approval[]) : [];
+  const catalogQuery = useApi<{ categories?: { id: number; name: string; is_active?: boolean; is_hidden?: boolean }[]; brands?: { id: number; name: string; is_active?: boolean; is_hidden?: boolean }[] }>(`${API_BASE}/masters/catalog`);
+  const approvalQuery = useApi<Approval[]>(`${API_BASE}/approvals/`);
+  const loading = catalogQuery.isLoading && !catalogQuery.data;
+  const rows = useMemo(() => {
+    const catalog = catalogQuery.data ?? {};
+    const approvals = Array.isArray(approvalQuery.data) ? approvalQuery.data : [];
     const pendingFor = (action: string) =>
       new Set(
         approvals
@@ -69,36 +59,29 @@ export function MasterEntityManager({
     const pendingEdits = pendingFor('update');
     const pendingDeletes = pendingFor('delete');
     const source = entityType === 'category' ? catalog.categories : catalog.brands;
-    setRows(
-      (source ?? []).map((row) => ({
-        id: row.id,
-        name: row.name,
-        isActive: row.is_active !== false,
-        isHidden: row.is_hidden === true,
-        pendingEdit: pendingEdits.has(row.id),
-        pendingDelete: pendingDeletes.has(row.id),
-        status: pendingEdits.has(row.id) || pendingDeletes.has(row.id) ? 'pending' : row.is_active === false ? 'inactive' : 'active',
-      })),
-    );
+    return (source ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      isActive: row.is_active !== false,
+      isHidden: row.is_hidden === true,
+      pendingEdit: pendingEdits.has(row.id),
+      pendingDelete: pendingDeletes.has(row.id),
+      status: pendingEdits.has(row.id) || pendingDeletes.has(row.id) ? 'pending' : row.is_active === false ? 'inactive' : 'active',
+    })) satisfies MasterRow[];
+  }, [approvalQuery.data, catalogQuery.data, entityType]);
+  const [editor, setEditor] = useState<{ mode: 'create' | 'update'; id?: number; name: string } | null>(null);
+  const [shown, setShown] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    await Promise.all([catalogQuery.mutate(), approvalQuery.mutate()]);
   }
 
   useEffect(() => {
-    let cancelled = false;
-    load()
-      .catch(() => {
-        if (!cancelled) {
-          toast.error('Unable to load master data.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [entityType]);
+    if (catalogQuery.error) {
+      toast.error('Unable to load master data.');
+    }
+  }, [catalogQuery.error]);
 
   useEffect(() => {
     if (!editor) {
@@ -203,6 +186,9 @@ export function MasterEntityManager({
           <Link
             key={link.href}
             href={link.href}
+            prefetch
+            onMouseEnter={() => prefetchRoute(link.href)}
+            onFocus={() => prefetchRoute(link.href)}
             className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
               link.entity === entityType ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'
             }`}

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { AppShell, PageHeading } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
+import { useApi } from '../../utils/query';
 
 type Branch = {
   id: number;
@@ -29,45 +30,14 @@ function parseApiError(detail: unknown, fallback: string) {
 }
 
 export default function BranchesPage() {
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error: loadError, isLoading, mutate } = useApi<Branch[]>(`${API_BASE}/branches/`);
+  const branches = data ?? [];
+  const loading = isLoading && !data;
+  const error = loadError ? 'Unable to load branches from the server.' : null;
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
-
-  async function loadBranches() {
-    const response = await apiFetch(`${API_BASE}/branches/`);
-    if (!response.ok) {
-      throw new Error('Failed to load branches');
-    }
-    const data: unknown = await response.json();
-    setBranches(Array.isArray(data) ? (data as Branch[]) : []);
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialLoad() {
-      try {
-        await loadBranches();
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load branches from the server.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    initialLoad();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   function openModal() {
     setForm(emptyForm);
@@ -115,7 +85,7 @@ export default function BranchesPage() {
 
       setModalOpen(false);
       setForm(emptyForm);
-      await loadBranches();
+      await mutate();
     } catch (caught) {
       setFormError(caught instanceof Error ? caught.message : 'Could not create the branch.');
     } finally {

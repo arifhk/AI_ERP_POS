@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { AppShell, PageHeading } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
+import { useApi } from '../../utils/query';
 const ROLE_OPTIONS = ['Admin', 'Cashier', 'Manager', 'Inventory'] as const;
 
 type User = {
@@ -22,9 +23,10 @@ const emptyForm = {
 };
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error: loadError, isLoading, mutate } = useApi<User[]>(`${API_BASE}/users/?limit=200`);
+  const users = data ?? [];
+  const loading = isLoading && !data;
+  const error = loadError ? 'Unable to load users from the server.' : null;
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -35,39 +37,6 @@ export default function UsersPage() {
   const [approveBranchId, setApproveBranchId] = useState('1');
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
-
-  async function loadUsers() {
-    const response = await apiFetch(`${API_BASE}/users/?limit=200`);
-    if (!response.ok) {
-      throw new Error('Failed to load users');
-    }
-
-    const data: unknown = await response.json();
-    setUsers(Array.isArray(data) ? (data as User[]) : []);
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialLoad() {
-      try {
-        await loadUsers();
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load users from the server.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    initialLoad();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   function openModal() {
     setForm(emptyForm);
@@ -133,7 +102,7 @@ export default function UsersPage() {
       }
 
       setApproveUser(null);
-      await loadUsers();
+      await mutate();
     } catch (caught) {
       setApproveError(caught instanceof Error ? caught.message : 'Could not approve the user.');
     } finally {
@@ -175,7 +144,7 @@ export default function UsersPage() {
 
       setModalOpen(false);
       setForm(emptyForm);
-      await loadUsers();
+      await mutate();
       window.alert('User added successfully!');
     } catch (caught) {
       setFormError(caught instanceof Error ? caught.message : 'Could not create the user.');

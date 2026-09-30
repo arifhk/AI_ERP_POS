@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Bell, LogOut, Menu, Search } from 'lucide-react';
 import { Sidebar, type AppSection } from './Sidebar';
-import { API_BASE, apiFetch } from '../utils/api';
+import { API_BASE } from '../utils/api';
+import { prefetchRoute, useApi } from '../utils/query';
 import { decodeJwtPayload, getStoredRole } from '../utils/auth';
 
 type AppShellProps = {
@@ -47,7 +48,8 @@ export function AppShell({
   const [collapsed, setCollapsed] = useState(false);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [notices, setNotices] = useState<ApprovalNotice[]>([]);
+  const approvals = useApi<ApprovalNotice[]>(`${API_BASE}/approvals/`);
+  const notices = (Array.isArray(approvals.data) ? approvals.data : []).filter((row) => row.status === 'Pending').slice(0, 8);
   const [noticesOpen, setNoticesOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [email, setEmail] = useState('');
@@ -61,23 +63,6 @@ export function AppShell({
     const payload = token ? decodeJwtPayload(token) : {};
     setEmail(typeof payload.sub === 'string' ? payload.sub : '');
     setRole(getStoredRole() ?? '');
-    let cancelled = false;
-    apiFetch(`${API_BASE}/approvals/`)
-      .then(async (response) => {
-        if (!response.ok) {
-          return;
-        }
-        const data: unknown = await response.json();
-        if (!cancelled && Array.isArray(data)) {
-          setNotices(
-            (data as ApprovalNotice[]).filter((row) => row.status === 'Pending').slice(0, 8),
-          );
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   useEffect(() => {
@@ -186,6 +171,9 @@ export function AppShell({
                     <Link
                       key={link.href}
                       href={link.href}
+                      prefetch
+                      onMouseEnter={() => prefetchRoute(link.href)}
+                      onFocus={() => prefetchRoute(link.href)}
                       onClick={() => setSearchOpen(false)}
                       className="block px-4 py-2.5 text-sm text-slate-700 transition hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
                     >

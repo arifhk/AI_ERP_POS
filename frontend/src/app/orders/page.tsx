@@ -12,6 +12,7 @@ import {
 } from '../../components/ThermalReceipt';
 import { AppShell } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
+import { useApi } from '../../utils/query';
 import { printWithMode } from '../../utils/print';
 
 type PrintLayout = 'thermal' | 'laser';
@@ -175,9 +176,10 @@ function orderToReceipt(order: Order): Receipt {
 }
 
 export default function OrdersPage() {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error: loadError, isLoading, mutate } = useApi<Order[]>(`${API_BASE}/orders/`);
+  const orders = data ?? [];
+  const loading = isLoading && !data;
+  const error = loadError ? 'Unable to load orders from the server.' : null;
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [returnOrder, setReturnOrder] = useState<Order | null>(null);
   const [returnProductId, setReturnProductId] = useState('');
@@ -190,38 +192,6 @@ export default function OrdersPage() {
   const [query, setQuery] = useState('');
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [printLayout, setPrintLayout] = useState<PrintLayout>('thermal');
-
-  async function loadOrders() {
-    const response = await apiFetch(`${API_BASE}/orders/`);
-    if (!response.ok) {
-      throw new Error('Failed to load orders');
-    }
-    const data: unknown = await response.json();
-    setOrders(Array.isArray(data) ? (data as Order[]) : []);
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialLoad() {
-      try {
-        await loadOrders();
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load orders from the server.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    initialLoad();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const filteredOrders = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -334,7 +304,7 @@ export default function OrdersPage() {
 
       setReturnOrder(null);
       setToast('Return processed. Stock has been restocked.');
-      await loadOrders();
+      await mutate();
     } catch (caught) {
       setReturnError(caught instanceof Error ? caught.message : 'Could not process the return.');
     } finally {

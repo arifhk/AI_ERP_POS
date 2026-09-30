@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { AppShell } from './AppShell';
 import { MASTER_LINKS } from './MasterEntityManager';
 import { MasterDataTable, type MasterColumn, type MasterStatus } from './MasterDataTable';
 import { API_BASE, apiFetch } from '../utils/api';
+import { prefetchRoute, useApi } from '../utils/query';
 
 export type CatalogRecord = {
   id: number;
@@ -70,24 +71,12 @@ export function MasterDataScreen({
   renderFields: (draft: MasterDraft, setDraft: (next: MasterDraft) => void, catalog: CatalogSnapshot) => ReactNode;
   payloadFrom: (draft: MasterDraft) => Record<string, string | number> | string;
 }) {
-  const [catalog, setCatalog] = useState<CatalogSnapshot>({});
-  const [rows, setRows] = useState<ScreenRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editor, setEditor] = useState<{ mode: 'create' | 'update'; id?: number; draft: MasterDraft } | null>(null);
-  const [shown, setShown] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  async function load() {
-    const [catalogRes, approvalRes] = await Promise.all([
-      apiFetch(`${API_BASE}/masters/catalog`),
-      apiFetch(`${API_BASE}/approvals/`),
-    ]);
-    if (!catalogRes.ok) {
-      throw new Error('Failed to load records');
-    }
-    const nextCatalog = (await catalogRes.json()) as CatalogSnapshot;
-    const approvalPayload: unknown = approvalRes.ok ? await approvalRes.json() : [];
-    const approvals = Array.isArray(approvalPayload) ? (approvalPayload as Approval[]) : [];
+  const catalogQuery = useApi<CatalogSnapshot>(`${API_BASE}/masters/catalog`);
+  const approvalQuery = useApi<Approval[]>(`${API_BASE}/approvals/`);
+  const catalog = catalogQuery.data ?? {};
+  const loading = catalogQuery.isLoading && !catalogQuery.data;
+  const rows = useMemo(() => {
+    const approvals = Array.isArray(approvalQuery.data) ? approvalQuery.data : [];
     const pendingFor = (action: string) =>
       new Set(
         approvals
@@ -96,40 +85,32 @@ export function MasterDataScreen({
       );
     const pendingEdits = pendingFor('update');
     const pendingDeletes = pendingFor('delete');
-    setCatalog(nextCatalog);
-    setRows(
-      recordsOf(nextCatalog).map((record) => ({
-        id: record.id,
-        source: record,
-        pendingEdit: pendingEdits.has(record.id),
-        pendingDelete: pendingDeletes.has(record.id),
-        status:
-          pendingEdits.has(record.id) || pendingDeletes.has(record.id)
-            ? 'pending'
-            : record.status === 'Inactive' || record.is_active === false
-              ? 'inactive'
-              : 'active',
-      })),
-    );
+    return recordsOf(catalog).map((record) => ({
+      id: record.id,
+      source: record,
+      pendingEdit: pendingEdits.has(record.id),
+      pendingDelete: pendingDeletes.has(record.id),
+      status:
+        pendingEdits.has(record.id) || pendingDeletes.has(record.id)
+          ? 'pending'
+          : record.status === 'Inactive' || record.is_active === false
+            ? 'inactive'
+            : 'active',
+    })) satisfies ScreenRow[];
+  }, [approvalQuery.data, catalog, entityType, recordsOf]);
+  const [editor, setEditor] = useState<{ mode: 'create' | 'update'; id?: number; draft: MasterDraft } | null>(null);
+  const [shown, setShown] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    await Promise.all([catalogQuery.mutate(), approvalQuery.mutate()]);
   }
 
   useEffect(() => {
-    let cancelled = false;
-    load()
-      .catch(() => {
-        if (!cancelled) {
-          toast.error('Unable to load master data.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [entityType]);
+    if (catalogQuery.error) {
+      toast.error('Unable to load master data.');
+    }
+  }, [catalogQuery.error]);
 
   useEffect(() => {
     if (!editor) {
@@ -243,6 +224,9 @@ export function MasterDataScreen({
           <Link
             key={link.href}
             href={link.href}
+            prefetch
+            onMouseEnter={() => prefetchRoute(link.href)}
+            onFocus={() => prefetchRoute(link.href)}
             className={`shrink-0 rounded-full px-4 py-1.5 text-sm font-semibold transition ${
               link.entity === entityType ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'
             }`}

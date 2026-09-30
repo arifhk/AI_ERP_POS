@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AppShell } from '../../components/AppShell';
 import { MasterDataTable, type MasterStatus } from '../../components/MasterDataTable';
-import { API_BASE, apiFetch } from '../../utils/api';
+import { API_BASE } from '../../utils/api';
+import { useApi } from '../../utils/query';
 
 type Tab = 'categories' | 'brands' | 'vendors';
 
@@ -31,79 +32,50 @@ const TABS: { id: Tab; label: string; entity: string }[] = [
 
 export default function MastersPage() {
   const [tab, setTab] = useState<Tab>('categories');
-  const [rows, setRows] = useState<Record<Tab, MasterRow[]>>({ categories: [], brands: [], vendors: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const [catalogRes, approvalRes] = await Promise.all([
-          apiFetch(`${API_BASE}/masters/catalog`),
-          apiFetch(`${API_BASE}/approvals/`),
-        ]);
-        if (!catalogRes.ok) {
-          throw new Error('Failed to load masters');
-        }
-        const catalog = (await catalogRes.json()) as {
-          categories?: { id: number; name: string }[];
-          brands?: { id: number; name: string }[];
-          vendors?: { id: number; name: string }[];
-        };
-        const approvalPayload: unknown = approvalRes.ok ? await approvalRes.json() : [];
-        const approvals: Approval[] = Array.isArray(approvalPayload) ? (approvalPayload as Approval[]) : [];
-        if (cancelled) {
-          return;
-        }
-        const pendingIds = (entity: string) =>
-          new Set(
-            approvals
-              .filter((row) => row.status === 'Pending' && row.entity_type === entity && row.entity_id)
-              .map((row) => row.entity_id as number),
-          );
-        const pendingCreates = (entity: string) =>
-          approvals
-            .filter((row) => row.status === 'Pending' && row.entity_type === entity && row.action === 'create')
-            .map((row) => ({
-              id: `pending-${row.id}`,
-              name: row.payload.name || 'New record',
-              detail: 'Waiting for an admin',
-              status: 'pending' as const,
-            }));
-        const mapRows = (entity: string, source: { id: number; name: string }[] | undefined) => {
-          const pending = pendingIds(entity);
-          return [
-            ...pendingCreates(entity),
-            ...(source ?? []).map((row) => ({
-              id: row.id,
-              name: row.name,
-              detail: entity === 'category' ? 'Category master' : entity === 'brand' ? 'Brand master' : 'Vendor master',
-              status: (pending.has(row.id) ? 'pending' : 'active') as MasterStatus,
-            })),
-          ];
-        };
-        setRows({
-          categories: mapRows('category', catalog.categories),
-          brands: mapRows('brand', catalog.brands),
-          vendors: mapRows('vendor', catalog.vendors),
-        });
-        setError(null);
-      } catch {
-        if (!cancelled) {
-          setError('Unable to load master data.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-    void load();
-    return () => {
-      cancelled = true;
+  const catalogQuery = useApi<{
+    categories?: { id: number; name: string }[];
+    brands?: { id: number; name: string }[];
+    vendors?: { id: number; name: string }[];
+  }>(`${API_BASE}/masters/catalog`);
+  const approvalQuery = useApi<Approval[]>(`${API_BASE}/approvals/`);
+  const loading = catalogQuery.isLoading && !catalogQuery.data;
+  const error = catalogQuery.error ? 'Unable to load master data.' : null;
+  const rows = useMemo(() => {
+    const catalog = catalogQuery.data ?? {};
+    const approvals = Array.isArray(approvalQuery.data) ? approvalQuery.data : [];
+    const pendingIds = (entity: string) =>
+      new Set(
+        approvals
+          .filter((row) => row.status === 'Pending' && row.entity_type === entity && row.entity_id)
+          .map((row) => row.entity_id as number),
+      );
+    const pendingCreates = (entity: string) =>
+      approvals
+        .filter((row) => row.status === 'Pending' && row.entity_type === entity && row.action === 'create')
+        .map((row) => ({
+          id: `pending-${row.id}`,
+          name: row.payload?.name || 'New record',
+          detail: 'Waiting for an admin',
+          status: 'pending' as const,
+        }));
+    const mapRows = (entity: string, source: { id: number; name: string }[] | undefined) => {
+      const pending = pendingIds(entity);
+      return [
+        ...pendingCreates(entity),
+        ...(source ?? []).map((row) => ({
+          id: row.id,
+          name: row.name,
+          detail: entity === 'category' ? 'Category master' : entity === 'brand' ? 'Brand master' : 'Vendor master',
+          status: (pending.has(row.id) ? 'pending' : 'active') as MasterStatus,
+        })),
+      ];
     };
-  }, []);
+    return {
+      categories: mapRows('category', catalog.categories),
+      brands: mapRows('brand', catalog.brands),
+      vendors: mapRows('vendor', catalog.vendors),
+    } satisfies Record<Tab, MasterRow[]>;
+  }, [approvalQuery.data, catalogQuery.data]);
 
   const current = TABS.find((item) => item.id === tab) ?? TABS[0];
 
