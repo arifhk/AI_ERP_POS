@@ -158,9 +158,19 @@ export default function PurchasesPage() {
     }
     setLookingUp(true);
     try {
-      const response = await apiFetch(`${API_BASE}/products/lookup?code=${encodeURIComponent(code)}`);
+      const params = new URLSearchParams({ code });
+      const response = await apiFetch(`${API_BASE}/products/lookup?${params.toString()}`);
       if (!response.ok) {
-        toast.error('No product matches that item code or barcode.');
+        let message = 'No product matches that item code or barcode.';
+        try {
+          const payload = (await response.json()) as { detail?: unknown };
+          if (typeof payload.detail === 'string' && payload.detail.trim()) {
+            message = payload.detail;
+          }
+        } catch {
+          // Keep the default lookup message if the error body is not JSON.
+        }
+        toast.error(message);
         return;
       }
       const found = (await response.json()) as LookupProduct;

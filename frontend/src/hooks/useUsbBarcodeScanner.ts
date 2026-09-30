@@ -11,7 +11,7 @@ function isProtectedField(target: EventTarget | null) {
     return true;
   }
   if (target instanceof HTMLInputElement) {
-    return target.type === 'tel' || target.type === 'password' || target.type === 'email' || target.type === 'date';
+    return true;
   }
   return false;
 }
