@@ -1304,6 +1304,36 @@ async def read_next_sku(
     return {"sku": await allocate_next_sku(session)}
 
 
+@router.get("/lookup", response_model=ProductRead)
+async def lookup_product(
+    code: str = Query(..., min_length=1, description="Item code, design code, or barcode"),
+    tenant_id: Optional[int] = Query(None),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ProductRead:
+    needle = code.strip()
+    if not needle:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item code is required.")
+    statement = restrict(
+        select(Product)
+        .options(*_PRODUCT_LOAD)
+        .where(
+            or_(
+                func.lower(Product.item_code) == needle.lower(),
+                func.lower(Product.design_code) == needle.lower(),
+                func.lower(Product.barcode) == needle.lower(),
+            )
+        ),
+        Product.tenant_id,
+        current_user,
+        tenant_id,
+    )
+    product = (await session.exec(statement)).first()
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No product matches that item code.")
+    return _to_read(product, await get_default_vat(session), include_image=False)
+
+
 @router.get("/{product_id}", response_model=ProductRead)
 async def get_product(
     product_id: int,

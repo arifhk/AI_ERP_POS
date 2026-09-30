@@ -8,6 +8,8 @@ type Product = {
   id: number;
   name: string;
   barcode: string;
+  item_code?: string | null;
+  purchase_price?: number;
   stock_quantity: number;
   is_active: boolean;
 };
@@ -60,6 +62,8 @@ export default function PurchasesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [itemCode, setItemCode] = useState('');
+  const [lookingUp, setLookingUp] = useState(false);
 
   async function loadPurchases() {
     const response = await apiFetch(`${API_BASE}/purchases/`);
@@ -108,8 +112,41 @@ export default function PurchasesPage() {
       ...emptyForm,
       product_id: products[0] ? String(products[0].id) : '',
     });
+    setItemCode('');
     setFormError(null);
     setModalOpen(true);
+  }
+
+  async function findByItemCode() {
+    const code = itemCode.trim();
+    if (!code) {
+      setFormError('Enter an item code.');
+      return;
+    }
+    setLookingUp(true);
+    setFormError(null);
+    try {
+      const response = await apiFetch(`${API_BASE}/products/lookup?code=${encodeURIComponent(code)}`);
+      if (response.status === 404) {
+        setFormError('No product matches that item code.');
+        return;
+      }
+      if (!response.ok) {
+        setFormError('Could not look up that item code.');
+        return;
+      }
+      const product = (await response.json()) as Product;
+      setProducts((current) => (current.some((row) => row.id === product.id) ? current : [product, ...current]));
+      setForm((current) => ({
+        ...current,
+        product_id: String(product.id),
+        cost_price: product.purchase_price != null ? String(product.purchase_price) : current.cost_price,
+      }));
+    } catch {
+      setFormError('Could not look up that item code.');
+    } finally {
+      setLookingUp(false);
+    }
   }
 
   function closeModal() {
@@ -320,6 +357,34 @@ export default function PurchasesPage() {
             <form onSubmit={(event) => void handleSubmit(event)} className="px-6 py-5">
               <div className="space-y-4">
                 <div>
+                  <label htmlFor="purchase-item-code" className="mb-1 block text-sm font-medium text-gray-700">
+                    Item code
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="purchase-item-code"
+                      value={itemCode}
+                      onChange={(event) => setItemCode(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void findByItemCode();
+                        }
+                      }}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="e.g. 01-PP9800"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void findByItemCode()}
+                      disabled={lookingUp}
+                      className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                    >
+                      {lookingUp ? 'Finding...' : 'Find'}
+                    </button>
+                  </div>
+                </div>
+                <div>
                   <label htmlFor="purchase-product" className="mb-1 block text-sm font-medium text-gray-700">
                     Product
                   </label>
@@ -337,6 +402,7 @@ export default function PurchasesPage() {
                     </option>
                     {products.map((product) => (
                       <option key={product.id} value={product.id}>
+                        {product.item_code ? `${product.item_code} · ` : ''}
                         {product.name} (Stock {product.stock_quantity})
                       </option>
                     ))}
