@@ -1,15 +1,33 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { Camera } from 'lucide-react';
+import { toast } from 'sonner';
 import { AppShell, PageHeading } from '../../components/AppShell';
+import { PosCameraScanner } from '../../components/PosCameraScanner';
+import { useUsbBarcodeScanner } from '../../hooks/useUsbBarcodeScanner';
 import { API_BASE, apiFetch } from '../../utils/api';
 
-type Product = {
+type Variant = {
+  id: number;
+  sku: string;
+  attributes: Record<string, string>;
+  stock_quantity: number;
+  inherit_parent?: boolean;
+  purchase_price?: number | null;
+};
+
+type LookupProduct = {
   id: number;
   name: string;
   barcode: string;
-  stock_quantity: number;
-  is_active: boolean;
+  item_code?: string | null;
+  vendor?: string;
+  purchase_price?: number;
+  stock_quantity?: number;
+  variants: Variant[];
+  matched_variant_id?: number | null;
+  matched_code?: string;
 };
 
 type Purchase = {
@@ -23,12 +41,19 @@ type Purchase = {
   created_by: string;
 };
 
-const emptyForm = {
-  product_id: '',
-  supplier_name: '',
-  quantity_added: '1',
-  cost_price: '',
-};
+function todayInputValue() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function variantLabel(variant: Variant) {
+  const parts = Object.entries(variant.attributes || {})
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}: ${value}`);
+  return parts.length ? parts.join(' · ') : variant.sku;
+}
 
 function formatCurrency(amount: number) {
   return `৳ ${amount.toLocaleString('en-BD', {
@@ -52,14 +77,47 @@ function formatPurchaseDate(value: string) {
 }
 
 export default function PurchasesPage() {
+  const scanRef = useRef<HTMLInputElement>(null);
+  const productRef = useRef<LookupProduct | null>(null);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [scanCode, setScanCode] = useState('');
+  const [lookingUp, setLookingUp] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [product, setProduct] = useState<LookupProduct | null>(null);
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [supplierName, setSupplierName] = useState('');
+  const [costPrice, setCostPrice] = useState('');
+  const [date, setDate] = useState(todayInputValue());
+
+  productRef.current = product;
+
+  const variants = product?.variants ?? [];
+  const gridRows = useMemo(() => {
+    if (!product) {
+      return [];
+    }
+    if (variants.length > 0) {
+      return variants.map((variant) => ({
+        key: String(variant.id),
+        variantId: variant.id,
+        title: variantLabel(variant),
+        sku: variant.sku,
+        stock: variant.stock_quantity,
+      }));
+    }
+    return [
+      {
+        key: 'default',
+        variantId: null as number | null,
+        title: 'Default',
+        sku: product.barcode,
+        stock: product.stock_quantity ?? 0,
+      },
+    ];
+  }, [product, variants]);
 
   async function loadPurchases() {
     const response = await apiFetch(`${API_BASE}/purchases/`);
@@ -70,22 +128,12 @@ export default function PurchasesPage() {
     setPurchases(Array.isArray(data) ? (data as Purchase[]) : []);
   }
 
-  async function loadProducts() {
-    const response = await apiFetch(`${API_BASE}/products/`);
-    if (!response.ok) {
-      throw new Error('Failed to load products');
-    }
-    const data: unknown = await response.json();
-    const list = Array.isArray(data) ? (data as Product[]) : [];
-    setProducts(list.filter((product) => product.is_active));
-  }
-
   useEffect(() => {
     let cancelled = false;
 
     async function initialLoad() {
       try {
-        await Promise.all([loadPurchases(), loadProducts()]);
+        await loadPurchases();
       } catch {
         if (!cancelled) {
           setError('Unable to load stock entries from the server.');
@@ -103,41 +151,117 @@ export default function PurchasesPage() {
     };
   }, []);
 
-  function openModal() {
-    setForm({
-      ...emptyForm,
-      product_id: products[0] ? String(products[0].id) : '',
-    });
-    setFormError(null);
-    setModalOpen(true);
-  }
-
-  function closeModal() {
-    if (submitting) {
+  async function lookupCode(raw: string, { increment } = { increment: true }) {
+    const code = raw.trim();
+    if (!code) {
       return;
     }
-    setModalOpen(false);
-    setFormError(null);
-    setForm(emptyForm);
+    setLookingUp(true);
+    try {
+      const response = await apiFetch(`${API_BASE}/products/lookup?code=${encodeURIComponent(code)}`);
+      if (!response.ok) {
+        toast.error('No product matches that item code or barcode.');
+        return;
+      }
+      const found = (await response.json()) as LookupProduct;
+      const current = productRef.current;
+      const matchedKey =
+        found.matched_variant_id != null
+          ? String(found.matched_variant_id)
+          : found.variants?.length
+            ? null
+            : 'default';
+
+      if (current && current.id === found.id && increment && matchedKey) {
+        setQuantities((qty) => {
+          const next = Number(qty[matchedKey] || 0) + 1;
+          return { ...qty, [matchedKey]: String(next) };
+        });
+        toast.success(`+1 ${code}`);
+      } else {
+        const initial: Record<string, string> = {};
+        if (found.variants?.length) {
+          for (const variant of found.variants) {
+            initial[String(variant.id)] = found.matched_variant_id === variant.id ? '1' : '0';
+          }
+        } else {
+          initial.default = '1';
+        }
+        setProduct(found);
+        setQuantities(initial);
+        setSupplierName(found.vendor || '');
+        const matchedVariant = found.variants?.find((variant) => variant.id === found.matched_variant_id);
+        const cost =
+          matchedVariant && !matchedVariant.inherit_parent && matchedVariant.purchase_price != null
+            ? matchedVariant.purchase_price
+            : found.purchase_price ?? 0;
+        setCostPrice(String(cost));
+        toast.success(`Loaded ${found.name}`);
+      }
+      setScanCode('');
+      scanRef.current?.focus();
+    } catch {
+      toast.error('Could not look up that code.');
+    } finally {
+      setLookingUp(false);
+    }
+  }
+
+  useUsbBarcodeScanner((code) => {
+    void lookupCode(code);
+  }, !submitting && !cameraOpen);
+
+  function onScanKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    void lookupCode(scanCode);
+  }
+
+  function onCameraScan(code: string) {
+    setCameraOpen(false);
+    void lookupCode(code);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSubmitting(true);
-    setFormError(null);
+    if (!product || submitting) {
+      return;
+    }
+    const items = gridRows
+      .map((row) => ({
+        variant_id: row.variantId,
+        quantity_added: Number(quantities[row.key] || 0),
+      }))
+      .filter((item) => Number.isFinite(item.quantity_added) && item.quantity_added > 0);
+    if (!items.length) {
+      toast.error('Enter quantity for at least one variant.');
+      return;
+    }
+    const cost = Number(costPrice);
+    if (!Number.isFinite(cost) || cost < 0) {
+      toast.error('Cost price cannot be negative.');
+      return;
+    }
+    if (!supplierName.trim()) {
+      toast.error('Supplier name is required.');
+      return;
+    }
 
+    setSubmitting(true);
     try {
       const response = await apiFetch(`${API_BASE}/purchases/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          product_id: Number(form.product_id),
-          supplier_name: form.supplier_name.trim(),
-          quantity_added: Number(form.quantity_added),
-          cost_price: Number(form.cost_price),
+          product_id: product.id,
+          supplier_name: supplierName.trim(),
+          cost_price: cost,
+          date: date || null,
+          items,
         }),
       });
-
       if (!response.ok) {
         let message = 'Could not receive stock.';
         try {
@@ -150,12 +274,17 @@ export default function PurchasesPage() {
         }
         throw new Error(message);
       }
-
-      setModalOpen(false);
-      setForm(emptyForm);
-      await Promise.all([loadPurchases(), loadProducts()]);
+      toast.success('Stock received successfully.');
+      setProduct(null);
+      setQuantities({});
+      setSupplierName('');
+      setCostPrice('');
+      setDate(todayInputValue());
+      setScanCode('');
+      await loadPurchases();
+      scanRef.current?.focus();
     } catch (caught) {
-      setFormError(caught instanceof Error ? caught.message : 'Could not receive stock.');
+      toast.error(caught instanceof Error ? caught.message : 'Could not receive stock.');
     } finally {
       setSubmitting(false);
     }
@@ -163,23 +292,183 @@ export default function PurchasesPage() {
 
   return (
     <>
-    <AppShell active="purchases">
-          <PageHeading
-            title="Purchases"
-            description="Receive supplier stock. Quantities are added to product inventory automatically."
-            action={
-            <button
-              type="button"
-              onClick={openModal}
-              className="rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-            >
-              Receive Stock
-            </button>
-            }
-          />
+      <AppShell active="purchases">
+        <PageHeading
+          title="Purchases"
+          description="Scan a barcode or item code to receive stock. Repeated scans add +1 to the matching variant."
+        />
 
+        <form onSubmit={(event) => void handleSubmit(event)} className="space-y-5">
+          <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm sm:p-6 dark:border-indigo-500/20 dark:bg-slate-800">
+            <label htmlFor="purchase-scan" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-100">
+              Scan or type item code / barcode
+            </label>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+              <input
+                ref={scanRef}
+                id="purchase-scan"
+                autoFocus
+                inputMode="text"
+                autoComplete="off"
+                enterKeyHint="search"
+                value={scanCode}
+                onChange={(event) => setScanCode(event.target.value)}
+                onKeyDown={onScanKeyDown}
+                placeholder="Type a code, then press Enter"
+                className="h-12 min-w-0 flex-1 rounded-xl border border-indigo-200 bg-indigo-50/40 px-4 text-base text-slate-900 outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100 dark:border-indigo-500/30 dark:bg-slate-900 dark:text-slate-100"
+              />
+              <button
+                type="button"
+                onClick={() => setCameraOpen(true)}
+                className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
+              >
+                <Camera className="h-4 w-4" />
+                Scan with camera
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              {lookingUp
+                ? 'Looking up…'
+                : 'Use your phone camera, a USB scanner, or type the code and press Enter.'}
+            </p>
+          </div>
+
+          {product ? (
+            <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-700 dark:bg-slate-800">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Product name
+                  </label>
+                  <input
+                    readOnly
+                    value={product.name}
+                    className="h-11 w-full rounded-xl border border-gray-200 bg-slate-50 px-3 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Item code
+                  </label>
+                  <input
+                    readOnly
+                    value={product.item_code || product.barcode}
+                    className="h-11 w-full rounded-xl border border-gray-200 bg-slate-50 px-3 font-mono text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="purchase-supplier"
+                    className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200"
+                  >
+                    Supplier name
+                  </label>
+                  <input
+                    id="purchase-supplier"
+                    required
+                    value={supplierName}
+                    onChange={(event) => setSupplierName(event.target.value)}
+                    className="h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="purchase-cost"
+                    className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200"
+                  >
+                    Cost price
+                  </label>
+                  <input
+                    id="purchase-cost"
+                    required
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={costPrice}
+                    onChange={(event) => setCostPrice(event.target.value)}
+                    className="h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label
+                    htmlFor="purchase-date"
+                    className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200"
+                  >
+                    Date
+                  </label>
+                  <input
+                    id="purchase-date"
+                    required
+                    type="date"
+                    value={date}
+                    onChange={(event) => setDate(event.target.value)}
+                    className="h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Variants</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Type a quantity or scan that variant barcode again to add 1.
+                </p>
+                <div className="mt-3 overflow-x-auto rounded-xl border border-gray-100 dark:border-slate-700">
+                  <div className="min-w-[18rem]">
+                    <div className="grid grid-cols-[1fr_auto_6.5rem] gap-3 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:px-4 dark:bg-slate-900">
+                      <span>Variant</span>
+                      <span>Stock</span>
+                      <span>Qty</span>
+                    </div>
+                    <ul>
+                      {gridRows.map((row) => (
+                        <li
+                          key={row.key}
+                          className="grid grid-cols-[1fr_auto_6.5rem] items-center gap-3 border-t border-gray-100 px-3 py-3 sm:px-4 dark:border-slate-700"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                              {row.title}
+                            </p>
+                            <p className="truncate font-mono text-xs text-slate-400">{row.sku}</p>
+                          </div>
+                          <span className="text-sm text-slate-500">{row.stock}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            inputMode="numeric"
+                            value={quantities[row.key] ?? '0'}
+                            onChange={(event) =>
+                              setQuantities((current) => ({ ...current, [row.key]: event.target.value }))
+                            }
+                            className="h-10 w-full rounded-lg border border-gray-200 px-2 text-right text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="mt-6 h-12 w-full rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {submitting ? 'Saving...' : 'Receive stock'}
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-12 text-center text-sm text-slate-500 sm:px-6 sm:py-16 dark:border-slate-700 dark:bg-slate-800">
+              Scan with the camera or type an item code to load the product and its variants.
+            </div>
+          )}
+        </form>
+
+        <section className="mt-8">
+          <h2 className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-100">Recent receipts</h2>
           {loading ? (
-            <div className="flex items-center justify-center rounded-lg border border-gray-100 bg-white p-16 shadow-sm">
+            <div className="flex items-center justify-center rounded-lg border border-gray-100 bg-white p-16 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <div className="flex flex-col items-center gap-3">
                 <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
                 <p className="text-sm font-medium text-gray-500">Loading data...</p>
@@ -187,16 +476,16 @@ export default function PurchasesPage() {
             </div>
           ) : (
             <>
-              {error && (
+              {error ? (
                 <div className="mb-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {error}
                 </div>
-              )}
+              ) : null}
 
-              <div className="hidden overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm md:block">
+              <div className="hidden overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm md:block dark:border-slate-700 dark:bg-slate-800">
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                    <thead className="bg-gray-50 dark:bg-slate-900">
                       <tr>
                         <th
                           scope="col"
@@ -220,48 +509,48 @@ export default function PurchasesPage() {
                           scope="col"
                           className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500"
                         >
-                          Qty Added
+                          Qty added
                         </th>
                         <th
                           scope="col"
                           className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500"
                         >
-                          Cost Price
+                          Cost price
                         </th>
                         <th
                           scope="col"
                           className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500"
                         >
-                          Created By
+                          Created by
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
+                    <tbody className="divide-y divide-gray-100 bg-white dark:divide-slate-700 dark:bg-slate-800">
                       {purchases.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="px-6 py-12 text-center text-sm text-gray-500">
-                            No stock entries yet. Receive stock to get started.
+                            No stock entries yet. Scan a product to get started.
                           </td>
                         </tr>
                       ) : (
                         purchases.map((purchase) => (
-                          <tr key={purchase.id} className="hover:bg-gray-50">
-                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
+                          <tr key={purchase.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/40">
+                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700 dark:text-slate-200">
                               {formatPurchaseDate(purchase.date)}
                             </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                            <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900 dark:text-slate-100">
                               {purchase.product_name || `Product #${purchase.product_id}`}
                             </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
+                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-700 dark:text-slate-200">
                               {purchase.supplier_name}
                             </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-semibold text-gray-900">
+                            <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-semibold text-gray-900 dark:text-slate-100">
                               +{purchase.quantity_added}
                             </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-right text-sm text-gray-900">
+                            <td className="whitespace-nowrap px-6 py-4 text-right text-sm text-gray-900 dark:text-slate-100">
                               {formatCurrency(purchase.cost_price)}
                             </td>
-                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600 dark:text-slate-300">
                               {purchase.created_by}
                             </td>
                           </tr>
@@ -273,24 +562,31 @@ export default function PurchasesPage() {
               </div>
               <div className="grid gap-3 md:hidden">
                 {purchases.length === 0 ? (
-                  <div className="rounded-lg border border-gray-100 bg-white px-4 py-12 text-center text-sm text-gray-500 shadow-sm">
-                    No stock entries yet. Receive stock to get started.
+                  <div className="rounded-lg border border-gray-100 bg-white px-4 py-12 text-center text-sm text-gray-500 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                    No stock entries yet. Scan a product to get started.
                   </div>
                 ) : (
                   purchases.map((purchase) => (
-                    <article key={purchase.id} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+                    <article
+                      key={purchase.id}
+                      className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800"
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <h2 className="truncate text-base font-semibold text-gray-900">
+                          <h3 className="truncate text-base font-semibold text-gray-900 dark:text-slate-100">
                             {purchase.product_name || `Product #${purchase.product_id}`}
-                          </h2>
+                          </h3>
                           <p className="mt-1 text-xs text-gray-500">{purchase.supplier_name}</p>
                         </div>
-                        <p className="shrink-0 text-sm font-semibold text-gray-900">+{purchase.quantity_added}</p>
+                        <p className="shrink-0 text-sm font-semibold text-gray-900 dark:text-slate-100">
+                          +{purchase.quantity_added}
+                        </p>
                       </div>
                       <div className="mt-3 flex items-center justify-between text-sm">
                         <p className="text-gray-500">{formatPurchaseDate(purchase.date)}</p>
-                        <p className="font-semibold text-gray-900">{formatCurrency(purchase.cost_price)}</p>
+                        <p className="font-semibold text-gray-900 dark:text-slate-100">
+                          {formatCurrency(purchase.cost_price)}
+                        </p>
                       </div>
                     </article>
                   ))
@@ -298,127 +594,16 @@ export default function PurchasesPage() {
               </div>
             </>
           )}
-    </AppShell>
+        </section>
+      </AppShell>
 
-      {modalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="receive-stock-title"
-        >
-          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white shadow-xl">
-            <div className="border-b border-gray-100 px-6 py-4">
-              <h2 id="receive-stock-title" className="text-lg font-semibold text-gray-900">
-                Receive Stock
-              </h2>
-              <p className="mt-1 text-sm text-gray-500">
-                Record a supplier delivery and increase on-hand quantity.
-              </p>
-            </div>
-
-            <form onSubmit={(event) => void handleSubmit(event)} className="px-6 py-5">
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="purchase-product" className="mb-1 block text-sm font-medium text-gray-700">
-                    Product
-                  </label>
-                  <select
-                    id="purchase-product"
-                    required
-                    value={form.product_id}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, product_id: event.target.value }))
-                    }
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="" disabled>
-                      Select a product
-                    </option>
-                    {products.map((product) => (
-                      <option key={product.id} value={product.id}>
-                        {product.name} (Stock {product.stock_quantity})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="purchase-supplier" className="mb-1 block text-sm font-medium text-gray-700">
-                    Supplier Name
-                  </label>
-                  <input
-                    id="purchase-supplier"
-                    required
-                    value={form.supplier_name}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, supplier_name: event.target.value }))
-                    }
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="e.g. Dhaka Wholesale Ltd."
-                  />
-                </div>
-                <div>
-                  <label htmlFor="purchase-qty" className="mb-1 block text-sm font-medium text-gray-700">
-                    Quantity
-                  </label>
-                  <input
-                    id="purchase-qty"
-                    required
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={form.quantity_added}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, quantity_added: event.target.value }))
-                    }
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="purchase-cost" className="mb-1 block text-sm font-medium text-gray-700">
-                    Cost Price
-                  </label>
-                  <input
-                    id="purchase-cost"
-                    required
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.cost_price}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, cost_price: event.target.value }))
-                    }
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="0.00"
-                  />
-                </div>
-              </div>
-
-              {formError && (
-                <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>
-              )}
-
-              <div className="mt-6 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  disabled={submitting}
-                  className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting || products.length === 0}
-                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
-                >
-                  {submitting ? 'Saving...' : 'Save Entry'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {cameraOpen ? (
+        <PosCameraScanner
+          regionId="purchase-camera-reader"
+          onScan={onCameraScan}
+          onClose={() => setCameraOpen(false)}
+        />
+      ) : null}
     </>
   );
 }

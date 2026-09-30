@@ -16,9 +16,11 @@ const FORMATS = [
 export function PosCameraScanner({
   onScan,
   onClose,
+  regionId = 'pos-camera-reader',
 }: {
   onScan: (code: string) => void;
   onClose: () => void;
+  regionId?: string;
 }) {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const onScanRef = useRef(onScan);
@@ -29,7 +31,7 @@ export function PosCameraScanner({
     let stopped = false;
 
     async function start() {
-      const instance = new Html5Qrcode('pos-camera-reader', {
+      const instance = new Html5Qrcode(regionId, {
         formatsToSupport: FORMATS,
         verbose: false,
       });
@@ -70,7 +72,7 @@ export function PosCameraScanner({
         void scanner.stop().catch(() => undefined);
       }
     };
-  }, []);
+  }, [regionId]);
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-4 sm:items-center">
@@ -85,7 +87,7 @@ export function PosCameraScanner({
             Close
           </button>
         </div>
-        <div id="pos-camera-reader" className="min-h-64 bg-black" />
+        <div id={regionId} className="min-h-64 bg-black" />
         {cameraError ? <p className="px-4 py-3 text-sm text-red-700">{cameraError}</p> : null}
       </div>
     </div>
