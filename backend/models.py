@@ -12,7 +12,8 @@ Base = SQLModel
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    """Naive UTC for TIMESTAMP WITHOUT TIME ZONE (PostgreSQL and SQLite)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def parse_iso_datetime(value: Optional[str], *, is_end: bool = False) -> Optional[datetime]:

@@ -140,10 +140,10 @@ def _align_visibility_flags(connection) -> None:
         for name in names:
             if name in columns:
                 continue
-            default = "1" if name == "is_active" else "0"
+            default = "TRUE" if name == "is_active" else "FALSE"
             connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} BOOLEAN DEFAULT {default}"))
             if table == "vendor_masters" and name == "is_active":
-                connection.execute(text("UPDATE vendor_masters SET is_active = 0 WHERE lower(status) = 'inactive'"))
+                connection.execute(text("UPDATE vendor_masters SET is_active = FALSE WHERE lower(status) = 'inactive'"))
 
 
 def _align_vendor_profile(connection) -> None:
@@ -236,7 +236,7 @@ def _align_pluspoint_admin_role(connection) -> None:
     )
     connection.execute(
         text(
-            "UPDATE users SET role = 'system_owner', is_active = 1, tenant_id = NULL "
+            "UPDATE users SET role = 'system_owner', is_active = TRUE, tenant_id = NULL "
             "WHERE lower(email) = 'admin@pluspoint.com'"
         )
     )
