@@ -1,56 +1,40 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { PosCameraScanner } from '../../components/PosCameraScanner';
 import { AppShell } from '../../components/AppShell';
 
-type Category = 'T-Shirts' | 'Pants';
-
 type Product = {
-  id: string;
+  barcode: string;
   name: string;
   price: number;
-  category: Category;
-  color: string;
+  vat: number;
 };
 
 type CartLine = {
   id: string;
+  barcode: string;
   name: string;
   price: number;
   qty: number;
-  discount: number;
+  vat: number;
+  disc: number;
 };
 
-type NumpadMode = 'qty' | 'disc' | 'price';
-
-type Customer = {
-  id: string;
-  name: string;
-};
+type PaymentType = 'Cash' | 'BKASH' | 'NAGAD' | 'Card';
 
 const PRODUCTS: Product[] = [
-  { id: 'tee-oxford', name: 'Oxford Shirt', price: 1850, category: 'T-Shirts', color: '#714B67' },
-  { id: 'tee-navy', name: 'Navy Oxford', price: 1850, category: 'T-Shirts', color: '#1f4e79' },
-  { id: 'tee-polo', name: 'Merino Polo', price: 2100, category: 'T-Shirts', color: '#017e84' },
-  { id: 'tee-linen', name: 'Linen Tee', price: 1450, category: 'T-Shirts', color: '#c4a574' },
-  { id: 'tee-stripe', name: 'Stripe Tee', price: 1250, category: 'T-Shirts', color: '#875A7B' },
-  { id: 'tee-crew', name: 'Crew Neck', price: 980, category: 'T-Shirts', color: '#4c6a92' },
-  { id: 'pant-chino', name: 'Slim Chino', price: 2450, category: 'Pants', color: '#8d6e4c' },
-  { id: 'pant-black', name: 'Black Chino', price: 2450, category: 'Pants', color: '#2c3e50' },
-  { id: 'pant-linen', name: 'Linen Trouser', price: 2750, category: 'Pants', color: '#b08968' },
-  { id: 'pant-denim', name: 'Straight Denim', price: 3200, category: 'Pants', color: '#3d5a80' },
-  { id: 'pant-cargo', name: 'Cargo Pant', price: 2950, category: 'Pants', color: '#6b705c' },
-  { id: 'pant-pleat', name: 'Pleated Trouser', price: 3100, category: 'Pants', color: '#5c4d7a' },
+  { barcode: '10000001', name: 'Oxford Shirt', price: 1850, vat: 5 },
+  { barcode: '10000002', name: 'Navy Oxford', price: 1850, vat: 5 },
+  { barcode: '10000003', name: 'Merino Polo', price: 2100, vat: 5 },
+  { barcode: '10000004', name: 'Linen Tee', price: 1450, vat: 5 },
+  { barcode: '10000007', name: 'Slim Chino', price: 2450, vat: 5 },
+  { barcode: '10000008', name: 'Black Chino', price: 2450, vat: 5 },
+  { barcode: '01-PP9800', name: 'Linen Trouser', price: 2750, vat: 5 },
+  { barcode: '10000010', name: 'Straight Denim', price: 3200, vat: 5 },
 ];
 
-const CUSTOMERS: Customer[] = [
-  { id: 'walk-in', name: 'Customer' },
-  { id: 'c-1', name: 'Nadia Rahman' },
-  { id: 'c-2', name: 'Imran Hossain' },
-  { id: 'c-3', name: 'Farhana Akter' },
-];
-
-const CATEGORIES = ['Home', 'T-Shirts', 'Pants'] as const;
+const PAYMENT_TYPES: PaymentType[] = ['Cash', 'BKASH', 'NAGAD', 'Card'];
 
 function money(amount: number) {
   const [whole, fraction] = Math.abs(amount).toFixed(2).split('.');
@@ -58,333 +42,552 @@ function money(amount: number) {
   return `${amount < 0 ? '-' : ''}${grouped}.${fraction}`;
 }
 
+function lineGross(line: CartLine) {
+  return line.price * line.qty;
+}
+
+function lineDiscount(line: CartLine) {
+  return lineGross(line) * (line.disc / 100);
+}
+
+function lineVat(line: CartLine) {
+  return (lineGross(line) - lineDiscount(line)) * (line.vat / 100);
+}
+
 function lineTotal(line: CartLine) {
-  return line.price * line.qty * (1 - line.discount / 100);
+  return lineGross(line) - lineDiscount(line) + lineVat(line);
 }
 
 export default function PosPage() {
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('Home');
+  const [scanCode, setScanCode] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [scanNotice, setScanNotice] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [mode, setMode] = useState<NumpadMode>('qty');
-  const [buffer, setBuffer] = useState('');
-  const [bufferFresh, setBufferFresh] = useState(true);
-  const [customerIndex, setCustomerIndex] = useState(0);
-  const [paidNote, setPaidNote] = useState<string | null>(null);
+  const [held, setHeld] = useState<CartLine[] | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [customerMobile, setCustomerMobile] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [payOpen, setPayOpen] = useState(false);
+  const [paymentType, setPaymentType] = useState<PaymentType>('Cash');
+  const [nonCash, setNonCash] = useState('0.00');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cashAmt, setCashAmt] = useState('0.00');
+  const [paidAmount, setPaidAmount] = useState('0.00');
+  const [clock, setClock] = useState('11 Oct 2026');
 
-  const visibleProducts = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    return PRODUCTS.filter((product) => {
-      const inCategory = category === 'Home' || product.category === category;
-      const matches = !term || product.name.toLowerCase().includes(term);
-      return inCategory && matches;
+  useEffect(() => {
+    const formatted = new Date().toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
-  }, [category, query]);
+    setClock(formatted);
+  }, []);
 
-  const grandTotal = useMemo(() => cart.reduce((sum, line) => sum + lineTotal(line), 0), [cart]);
-  const customer = CUSTOMERS[customerIndex] ?? CUSTOMERS[0];
+  const totals = useMemo(() => {
+    const subTotal = cart.reduce((sum, line) => sum + lineGross(line), 0);
+    const discount = cart.reduce((sum, line) => sum + lineDiscount(line), 0);
+    const vat = cart.reduce((sum, line) => sum + lineVat(line), 0);
+    const qty = cart.reduce((sum, line) => sum + line.qty, 0);
+    return {
+      lines: cart.length,
+      qty,
+      subTotal,
+      discount,
+      vat,
+      net: subTotal - discount + vat,
+    };
+  }, [cart]);
 
-  function selectLine(id: string) {
-    setSelectedId(id);
-    setBuffer('');
-    setBufferFresh(true);
-  }
+  const paidValue = Number(paidAmount);
+  const changeAmount = Number.isFinite(paidValue) ? paidValue - totals.net : 0;
 
   function addProduct(product: Product) {
-    setPaidNote(null);
+    setStatus(null);
     setCart((current) => {
-      const existing = current.find((line) => line.id === product.id);
+      const existing = current.find((line) => line.barcode === product.barcode);
       if (existing) {
-        return current.map((line) => (line.id === product.id ? { ...line, qty: line.qty + 1 } : line));
+        setSelectedId(existing.id);
+        return current.map((line) => (line.id === existing.id ? { ...line, qty: line.qty + 1 } : line));
       }
-      return [...current, { id: product.id, name: product.name, price: product.price, qty: 1, discount: 0 }];
-    });
-    selectLine(product.id);
-  }
-
-  function updateSelected(nextBuffer: string) {
-    if (!selectedId) {
-      return;
-    }
-    setCart((current) => {
-      const line = current.find((row) => row.id === selectedId);
-      if (!line) {
-        return current;
-      }
-      if (nextBuffer === '' || nextBuffer === '.' || nextBuffer === '-') {
-        return current;
-      }
-      const value = Number(nextBuffer);
-      if (!Number.isFinite(value)) {
-        return current;
-      }
-      if (mode === 'qty') {
-        const qty = Math.trunc(Math.abs(value));
-        if (qty < 1) {
-          setSelectedId(null);
-          return current.filter((row) => row.id !== line.id);
-        }
-        return current.map((row) => (row.id === line.id ? { ...row, qty } : row));
-      }
-      if (mode === 'disc') {
-        const discount = Math.min(100, Math.max(0, value));
-        return current.map((row) => (row.id === line.id ? { ...row, discount } : row));
-      }
-      const price = Math.max(0, Math.abs(value));
-      return current.map((row) => (row.id === line.id ? { ...row, price } : row));
+      const id = `${product.barcode}-${Date.now()}`;
+      setSelectedId(id);
+      return [
+        ...current,
+        { id, barcode: product.barcode, name: product.name, price: product.price, qty: 1, vat: product.vat, disc: 0 },
+      ];
     });
   }
 
-  function pressDigit(digit: string) {
-    if (!selectedId) {
+  function submitScan(code: string) {
+    const term = code.trim().toLowerCase();
+    const product = PRODUCTS.find((item) => item.barcode.toLowerCase() === term || item.name.toLowerCase() === term);
+    if (!product) {
+      setScanNotice('No sample item matches that code.');
       return;
     }
-    const next = bufferFresh ? digit : `${buffer}${digit}`;
-    setBuffer(next);
-    setBufferFresh(false);
-    updateSelected(next);
+    addProduct(product);
+    setScanCode('');
+    setScanNotice(null);
+    setCameraOpen(false);
   }
 
-  function pressDot() {
-    if (!selectedId || mode === 'qty') {
-      return;
-    }
-    if (bufferFresh) {
-      setBuffer('0.');
-      setBufferFresh(false);
-      return;
-    }
-    if (buffer.includes('.')) {
-      return;
-    }
-    const next = `${buffer || '0'}.`;
-    setBuffer(next);
-    setBufferFresh(false);
+  function updateLine(id: string, patch: Partial<Pick<CartLine, 'qty' | 'vat' | 'disc' | 'price'>>) {
+    setCart((current) => current.map((line) => (line.id === id ? { ...line, ...patch } : line)));
   }
 
-  function pressBackspace() {
-    if (!selectedId) {
-      return;
-    }
-    const next = bufferFresh ? '' : buffer.slice(0, -1);
-    setBuffer(next);
-    setBufferFresh(false);
-    if (next === '') {
-      if (mode === 'qty') {
-        setCart((current) => current.filter((row) => row.id !== selectedId));
-        setSelectedId(null);
-      }
-      return;
-    }
-    updateSelected(next);
+  function removeLine(id: string) {
+    setCart((current) => current.filter((line) => line.id !== id));
+    setSelectedId((current) => (current === id ? null : current));
   }
 
-  function switchMode(nextMode: NumpadMode) {
-    setMode(nextMode);
-    setBuffer('');
-    setBufferFresh(true);
+  function focusQty() {
+    const id = selectedId ?? cart[0]?.id;
+    if (!id) {
+      return;
+    }
+    setSelectedId(id);
+    window.setTimeout(() => document.getElementById(`qty-${id}`)?.focus(), 0);
   }
 
-  function pay() {
+  function removeSelected() {
+    if (selectedId) {
+      removeLine(selectedId);
+    }
+  }
+
+  function holdInvoice() {
+    if (cart.length === 0 && held) {
+      setCart(held);
+      setHeld(null);
+      setStatus('Held invoice restored.');
+      return;
+    }
     if (cart.length === 0) {
       return;
     }
-    const label = customer.name === 'Customer' ? 'Walk-in' : customer.name;
-    setPaidNote(`Payment ${money(grandTotal)} · ${label}`);
+    setHeld(cart);
     setCart([]);
     setSelectedId(null);
-    setBuffer('');
-    setBufferFresh(true);
+    setStatus('Invoice held.');
   }
 
-  const modeButton = (key: NumpadMode, label: string) => (
-    <button
-      type="button"
-      onClick={() => switchMode(key)}
-      className={`h-14 rounded-md text-base font-semibold shadow-sm transition active:scale-[0.98] sm:h-16 ${
-        mode === key ? 'bg-[#714B67] text-white' : 'bg-white text-[#714B67] hover:bg-[#f7f2f5]'
-      }`}
-    >
-      {label}
-    </button>
-  );
+  function cancelInvoice() {
+    setCart([]);
+    setSelectedId(null);
+    setScanCode('');
+    setScanNotice(null);
+    setStatus('Invoice cancelled.');
+    setPayOpen(false);
+  }
+
+  function openPay() {
+    if (cart.length === 0) {
+      setStatus('Add at least one item before payment.');
+      return;
+    }
+    const net = totals.net.toFixed(2);
+    setPaymentType('Cash');
+    setNonCash('0.00');
+    setCardNumber('');
+    setCashAmt(net);
+    setPaidAmount(net);
+    setPayOpen(true);
+  }
+
+  function applyPaymentType(next: PaymentType) {
+    setPaymentType(next);
+    const net = totals.net.toFixed(2);
+    if (next === 'Cash') {
+      setNonCash('0.00');
+      setCardNumber('');
+      setCashAmt(net);
+      setPaidAmount(net);
+      return;
+    }
+    setNonCash(net);
+    setCashAmt('0.00');
+    setPaidAmount(net);
+  }
+
+  function confirmPay() {
+    if (!Number.isFinite(paidValue) || paidValue < totals.net) {
+      return;
+    }
+    const who = customerName.trim() || customerMobile.trim() || 'Walk-in';
+    setStatus(`Paid ${money(totals.net)} · ${paymentType} · ${who}`);
+    setCart([]);
+    setSelectedId(null);
+    setPayOpen(false);
+  }
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (payOpen || cameraOpen) {
+        return;
+      }
+      if (event.key === 'F2') {
+        event.preventDefault();
+        focusQty();
+      } else if (event.key === 'F4') {
+        event.preventDefault();
+        removeSelected();
+      } else if (event.key === 'F6') {
+        event.preventDefault();
+        holdInvoice();
+      } else if (event.key === 'F10') {
+        event.preventDefault();
+        cancelInvoice();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   return (
-    <AppShell
-      active="pos"
-      mainClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#ececec] p-0 dark:bg-slate-900"
-    >
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-        <section className="flex min-h-0 w-full flex-[2] flex-col overflow-hidden bg-white shadow-[4px_0_16px_rgba(0,0,0,0.06)] lg:w-[38%] lg:flex-none dark:bg-slate-800 dark:shadow-none">
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {cart.length === 0 ? (
-              <div className="flex h-full min-h-40 items-center justify-center px-6 text-center text-sm text-[#8f8f8f] dark:text-slate-400">
-                {paidNote ?? 'Select a product to start the order'}
+    <AppShell active="pos" mainClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#eef1f4] p-0 dark:bg-slate-900">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <header className="shrink-0 border-b border-slate-200 bg-white px-3 py-3 dark:border-slate-700 dark:bg-slate-800">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+            <div className="shrink-0 xl:w-56">
+              <p className="text-base font-semibold text-slate-900 dark:text-slate-100">Bashundhara City</p>
+              <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">Terminal 01 · {clock}</p>
+            </div>
+            <div className="min-w-0 flex-1">
+              <label htmlFor="pos-barcode" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Scan Barcode
+              </label>
+              <div className="flex items-stretch gap-2">
+                <input
+                  id="pos-barcode"
+                  autoFocus
+                  value={scanCode}
+                  onChange={(event) => {
+                    setScanCode(event.target.value);
+                    setScanNotice(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      submitScan(scanCode);
+                    }
+                  }}
+                  placeholder="Scan Barcode or Type Item Code"
+                  className="min-h-[52px] min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-4 text-lg text-slate-900 outline-none ring-sky-500/30 placeholder:text-slate-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCameraOpen(true)}
+                  className="inline-flex min-h-[52px] shrink-0 touch-manipulation items-center justify-center gap-2 rounded-md bg-[#714B67] px-4 text-sm font-semibold text-white active:bg-[#5d3e55]"
+                >
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+                    <circle cx="12" cy="13" r="3.5" />
+                  </svg>
+                  Scan with Camera
+                </button>
               </div>
-            ) : (
-              <ul>
-                {cart.map((line) => {
-                  const selected = line.id === selectedId;
-                  return (
-                    <li key={line.id}>
-                      <button
-                        type="button"
-                        onClick={() => selectLine(line.id)}
-                        className={`flex w-full flex-col gap-1 px-4 py-3 text-left ${
-                          selected ? 'bg-[#d7e8ea] dark:bg-teal-900/40' : 'hover:bg-[#f7f7f7] dark:hover:bg-slate-700/40'
-                        }`}
+              {scanNotice ? <p className="mt-1 text-sm font-medium text-rose-600">{scanNotice}</p> : null}
+            </div>
+            <div className="grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:w-80">
+              <label className="block text-xs font-semibold text-slate-500">
+                Customer Mobile No
+                <input
+                  value={customerMobile}
+                  onChange={(event) => setCustomerMobile(event.target.value)}
+                  placeholder="01XXXXXXXXX"
+                  className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-slate-500">
+                Customer Name
+                <input
+                  value={customerName}
+                  onChange={(event) => setCustomerName(event.target.value)}
+                  placeholder="Walk-in"
+                  className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                />
+              </label>
+            </div>
+          </div>
+        </header>
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+          <section className="min-h-0 min-w-0 flex-1 overflow-auto lg:w-3/4 lg:flex-none">
+            <table className="min-w-[920px] w-full border-collapse bg-white text-left text-sm dark:bg-slate-800">
+              <thead className="sticky top-0 z-10 bg-slate-800 text-xs font-semibold uppercase tracking-wide text-white">
+                <tr>
+                  <th className="px-3 py-2">SL No</th>
+                  <th className="px-3 py-2">Barcode</th>
+                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2 text-right">Price</th>
+                  <th className="px-3 py-2 text-right">Qty</th>
+                  <th className="px-3 py-2 text-right">VAT (%)</th>
+                  <th className="px-3 py-2 text-right">Disc (%)</th>
+                  <th className="px-3 py-2 text-right">Total Value</th>
+                  <th className="px-3 py-2 text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cart.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-16 text-center text-sm text-slate-500">
+                      {status ?? 'Scan a barcode or type an item code to start the invoice.'}
+                    </td>
+                  </tr>
+                ) : (
+                  cart.map((line, index) => {
+                    const selected = line.id === selectedId;
+                    return (
+                      <tr
+                        key={line.id}
+                        onClick={() => setSelectedId(line.id)}
+                        className={`border-b border-slate-100 ${selected ? 'bg-sky-50 dark:bg-sky-950/40' : 'hover:bg-slate-50 dark:hover:bg-slate-700/40'} dark:border-slate-700`}
                       >
-                        <span className="text-[15px] font-semibold text-[#212529] dark:text-slate-100">{line.name}</span>
-                        <span className="flex items-baseline justify-between gap-3 text-sm text-[#4c4c4c] dark:text-slate-300">
-                          <span>
-                            {line.qty} × {money(line.price)}
-                            {line.discount > 0 ? `  ·  ${line.discount}%` : ''}
-                          </span>
-                          <span className="text-base font-semibold tabular-nums text-[#212529] dark:text-slate-100">
-                            {money(lineTotal(line))}
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
+                        <td className="px-3 py-2 tabular-nums text-slate-600 dark:text-slate-300">{index + 1}</td>
+                        <td className="px-3 py-2 font-medium text-slate-800 dark:text-slate-100">{line.barcode}</td>
+                        <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">{line.name}</td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={line.price}
+                            onChange={(event) => updateLine(line.id, { price: Math.max(0, Number(event.target.value) || 0) })}
+                            className="h-10 w-24 rounded border border-slate-200 bg-white px-2 text-right tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            id={`qty-${line.id}`}
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={line.qty}
+                            onChange={(event) => updateLine(line.id, { qty: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })}
+                            className="h-10 w-16 rounded border border-slate-200 bg-white px-2 text-right tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={line.vat}
+                            onChange={(event) => updateLine(line.id, { vat: Math.min(100, Math.max(0, Number(event.target.value) || 0)) })}
+                            className="h-10 w-16 rounded border border-slate-200 bg-white px-2 text-right tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={line.disc}
+                            onChange={(event) => updateLine(line.id, { disc: Math.min(100, Math.max(0, Number(event.target.value) || 0)) })}
+                            className="h-10 w-16 rounded border border-slate-200 bg-white px-2 text-right tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-900 dark:text-slate-100">{money(lineTotal(line))}</td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              removeLine(line.id);
+                            }}
+                            className="min-h-[40px] touch-manipulation rounded bg-rose-50 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </section>
 
-          <div className="grid shrink-0 grid-cols-4 gap-1.5 bg-[#f4f4f4] p-2 dark:bg-slate-900">
-            {['1', '2', '3'].map((digit) => (
-              <button key={digit} type="button" onClick={() => pressDigit(digit)} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
-                {digit}
+          <aside className="flex w-full shrink-0 flex-col gap-3 border-t border-slate-200 bg-white p-3 lg:w-1/4 lg:border-t-0 lg:border-l dark:border-slate-700 dark:bg-slate-800">
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={focusQty} className="min-h-[48px] touch-manipulation rounded-md bg-sky-600 px-2 text-sm font-semibold text-white active:bg-sky-700">
+                Change Qty <span className="block text-[11px] font-medium text-sky-100">F2</span>
               </button>
-            ))}
-            {modeButton('qty', 'Qty')}
-            {['4', '5', '6'].map((digit) => (
-              <button key={digit} type="button" onClick={() => pressDigit(digit)} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
-                {digit}
+              <button type="button" onClick={removeSelected} className="min-h-[48px] touch-manipulation rounded-md bg-rose-600 px-2 text-sm font-semibold text-white active:bg-rose-700">
+                Remove Item <span className="block text-[11px] font-medium text-rose-100">F4</span>
               </button>
-            ))}
-            {modeButton('disc', 'Disc')}
-            {['7', '8', '9'].map((digit) => (
-              <button key={digit} type="button" onClick={() => pressDigit(digit)} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
-                {digit}
+              <button type="button" onClick={holdInvoice} className="min-h-[48px] touch-manipulation rounded-md bg-amber-500 px-2 text-sm font-semibold text-white active:bg-amber-600">
+                Hold Invoice <span className="block text-[11px] font-medium text-amber-100">F6</span>
               </button>
-            ))}
-            {modeButton('price', 'Price')}
-            <button type="button" aria-label="Backspace" onClick={pressBackspace} className="flex h-14 items-center justify-center rounded-md bg-white text-[#714B67] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800">
-              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="M20 6H9l-6 6 6 6h11a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1z" />
-                <path d="m14 10-4 4m0-4 4 4" />
-              </svg>
-            </button>
-            <button type="button" onClick={() => pressDigit('0')} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
-              0
-            </button>
-            <button type="button" onClick={pressDot} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
-              .
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (!selectedId || mode === 'qty') {
-                  return;
-                }
-                const next = buffer.startsWith('-') ? buffer.slice(1) : `-${buffer || '0'}`;
-                setBuffer(next);
-                setBufferFresh(false);
-                updateSelected(next);
-              }}
-              className="h-14 rounded-md bg-white text-lg font-semibold text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100"
-            >
-              +/−
-            </button>
-          </div>
-
-          <div className="grid shrink-0 grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)] gap-2 bg-white p-2 dark:bg-slate-800">
-            <button
-              type="button"
-              onClick={() => setCustomerIndex((index) => (index + 1) % CUSTOMERS.length)}
-              className="flex h-16 items-center justify-center gap-2 rounded-md bg-[#f6f6f6] px-3 text-sm font-semibold text-[#212529] active:bg-[#ececec] dark:bg-slate-700 dark:text-slate-100"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-[#714B67]" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <circle cx="12" cy="8" r="3" />
-                <path d="M5 19c1.5-3 3.8-4.5 7-4.5S17.5 16 19 19" />
-              </svg>
-              <span className="truncate">{customer.name}</span>
-            </button>
-            <button
-              type="button"
-              onClick={pay}
-              className="flex h-16 items-center justify-between gap-3 rounded-md bg-[#714B67] px-4 text-white shadow-md active:bg-[#5d3e55]"
-            >
-              <span className="text-lg font-semibold">Payment</span>
-              <span className="text-xl font-bold tabular-nums">{money(grandTotal)}</span>
-            </button>
-          </div>
-        </section>
-
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#f0eeee] dark:bg-slate-900">
-          <div className="shrink-0 space-y-3 px-3 pb-2 pt-3">
-            <div className="relative">
-              <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8f8f8f]" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.5-3.5" />
-              </svg>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search products..."
-                className="h-12 w-full rounded-md border-0 bg-white pl-12 pr-4 text-base text-[#212529] shadow-sm outline-none ring-[#714B67]/30 placeholder:text-[#9a9a9a] focus:ring-2 dark:bg-slate-800 dark:text-slate-100"
-              />
+              <button type="button" onClick={cancelInvoice} className="min-h-[48px] touch-manipulation rounded-md bg-slate-700 px-2 text-sm font-semibold text-white active:bg-slate-800">
+                Cancel Invoice <span className="block text-[11px] font-medium text-slate-200">F10</span>
+              </button>
             </div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {CATEGORIES.map((chip) => {
-                const active = chip === category;
-                return (
-                  <button
-                    key={chip}
-                    type="button"
-                    onClick={() => setCategory(chip)}
-                    className={`h-11 shrink-0 rounded-full px-5 text-sm font-semibold ${
-                      active
-                        ? 'bg-[#714B67] text-white'
-                        : 'bg-white text-[#4c4c4c] shadow-sm dark:bg-slate-800 dark:text-slate-200'
-                    }`}
-                  >
-                    {chip}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-            {visibleProducts.length === 0 ? (
-              <p className="px-2 py-10 text-center text-sm text-[#8f8f8f]">No products in this category.</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-                {visibleProducts.map((product) => (
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() => addProduct(product)}
-                    className="overflow-hidden rounded-md bg-white text-left shadow-sm active:scale-[0.98] dark:bg-slate-800"
-                  >
-                    <div className="flex aspect-[4/3] items-center justify-center" style={{ backgroundColor: product.color }}>
-                      <span className="text-3xl font-semibold text-white/90">{product.name.slice(0, 1)}</span>
-                    </div>
-                    <div className="px-3 py-3">
-                      <p className="line-clamp-2 min-h-10 text-sm font-semibold text-[#212529] dark:text-slate-100">{product.name}</p>
-                      <p className="mt-1 text-sm font-medium tabular-nums text-[#714B67] dark:text-[#e7c6d8]">{money(product.price)}</p>
-                    </div>
-                  </button>
-                ))}
+            <dl className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-600 dark:bg-slate-900">
+              <div className="flex justify-between text-slate-600 dark:text-slate-300">
+                <dt>Total Line</dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{totals.lines}</dd>
               </div>
-            )}
-          </div>
-        </section>
+              <div className="flex justify-between text-slate-600 dark:text-slate-300">
+                <dt>Total Qty</dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{totals.qty}</dd>
+              </div>
+              <div className="flex justify-between text-slate-600 dark:text-slate-300">
+                <dt>Sub Total</dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{money(totals.subTotal)}</dd>
+              </div>
+              <div className="flex justify-between text-slate-600 dark:text-slate-300">
+                <dt>VAT</dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{money(totals.vat)}</dd>
+              </div>
+              <div className="flex justify-between text-slate-600 dark:text-slate-300">
+                <dt>Discount</dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{money(totals.discount)}</dd>
+              </div>
+              <div className="border-t border-slate-200 pt-2 dark:border-slate-700">
+                <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Net Amount</dt>
+                <dd className="mt-1 text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{money(totals.net)}</dd>
+              </div>
+            </dl>
+
+            {held ? <p className="text-xs font-medium text-amber-700">One invoice is on hold. Press F6 to restore it.</p> : null}
+            {status && cart.length > 0 ? <p className="text-xs font-medium text-slate-500">{status}</p> : null}
+
+            <button
+              type="button"
+              onClick={openPay}
+              className="mt-auto min-h-[64px] touch-manipulation rounded-md bg-emerald-600 text-xl font-bold text-white shadow-md active:bg-emerald-700 max-lg:sticky max-lg:bottom-0"
+            >
+              Pay Now
+            </button>
+          </aside>
+        </div>
       </div>
+
+      {cameraOpen ? (
+        <PosCameraScanner regionId="pos-camera-reader" onScan={submitScan} onClose={() => setCameraOpen(false)} />
+      ) : null}
+
+      {payOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-3 sm:items-center" role="presentation">
+          <div role="dialog" aria-modal="true" aria-labelledby="invoice-payment-title" className="w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-slate-800">
+            <div className="flex items-center justify-between bg-slate-800 px-4 py-3 text-white">
+              <h2 id="invoice-payment-title" className="text-base font-semibold">
+                Invoice Payment
+              </h2>
+              <p className="text-sm text-slate-300">Bashundhara City · Terminal 01</p>
+            </div>
+            <div className="grid gap-4 p-4 sm:grid-cols-2">
+              <div className="space-y-3">
+                <label className="block text-xs font-semibold text-slate-500">
+                  Mobile
+                  <input
+                    value={customerMobile}
+                    onChange={(event) => setCustomerMobile(event.target.value)}
+                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 px-3 text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  Invoice Amount
+                  <input
+                    readOnly
+                    value={money(totals.net)}
+                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-200 bg-slate-50 px-3 text-lg font-semibold tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  Payment Type
+                  <select
+                    value={paymentType}
+                    onChange={(event) => applyPaymentType(event.target.value as PaymentType)}
+                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  >
+                    {PAYMENT_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="space-y-3">
+                <label className="block text-xs font-semibold text-slate-500">
+                  Non-Cash Amt
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={nonCash}
+                    onChange={(event) => setNonCash(event.target.value)}
+                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 px-3 text-right text-sm tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  Card Number
+                  <input
+                    value={cardNumber}
+                    onChange={(event) => setCardNumber(event.target.value)}
+                    disabled={paymentType !== 'Card'}
+                    placeholder={paymentType === 'Card' ? 'XXXX XXXX XXXX XXXX' : 'Not required'}
+                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 px-3 text-sm disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-700"
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="grid gap-3 border-t border-slate-200 px-4 py-4 sm:grid-cols-3 dark:border-slate-700">
+              <label className="block text-xs font-semibold text-slate-500">
+                Cash Amt
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={cashAmt}
+                  onChange={(event) => setCashAmt(event.target.value)}
+                  className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 px-3 text-right tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-slate-500">
+                Paid Amount
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={paidAmount}
+                  onChange={(event) => setPaidAmount(event.target.value)}
+                  className="mt-1 min-h-[48px] w-full rounded-md border border-emerald-300 bg-emerald-50 px-3 text-right text-lg font-semibold tabular-nums dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-slate-500">
+                Change Amount
+                <input
+                  readOnly
+                  value={money(Math.max(0, changeAmount))}
+                  className="mt-1 min-h-[48px] w-full rounded-md border border-slate-200 bg-slate-50 px-3 text-right text-lg font-bold tabular-nums text-emerald-700 dark:border-slate-600 dark:bg-slate-900 dark:text-emerald-300"
+                />
+              </label>
+            </div>
+            {changeAmount < 0 ? <p className="px-4 pb-2 text-sm font-medium text-rose-600">Paid amount is short by {money(Math.abs(changeAmount))}.</p> : null}
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-700">
+              <button type="button" onClick={() => setPayOpen(false)} className="min-h-[48px] touch-manipulation rounded-md bg-slate-200 px-6 text-sm font-semibold text-slate-800">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmPay}
+                className="min-h-[48px] touch-manipulation rounded-md bg-emerald-600 px-8 text-sm font-bold text-white disabled:bg-emerald-300"
+                disabled={changeAmount < 0}
+              >
+                Ok
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }
