@@ -1,360 +1,389 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Minus, Plus, Search, Trash2 } from 'lucide-react';
 import { AppShell } from '../../components/AppShell';
 
-type CatalogItem = {
+type Category = 'T-Shirts' | 'Pants';
+
+type Product = {
   id: string;
   name: string;
-  variant: string;
-  barcode: string;
   price: number;
+  category: Category;
+  color: string;
 };
 
 type CartLine = {
   id: string;
   name: string;
-  variant: string;
   price: number;
   qty: number;
+  discount: number;
 };
+
+type NumpadMode = 'qty' | 'disc' | 'price';
 
 type Customer = {
   id: string;
   name: string;
-  phone: string;
 };
 
-const VAT_RATE = 0.05;
-
-const CATALOG: CatalogItem[] = [
-  { id: 'sku-1001', name: 'Oxford Shirt', variant: 'White / M', barcode: '10000001', price: 1850 },
-  { id: 'sku-1002', name: 'Oxford Shirt', variant: 'Navy / L', barcode: '10000002', price: 1850 },
-  { id: 'sku-1003', name: 'Slim Chino', variant: 'Khaki / 32', barcode: '10000003', price: 2450 },
-  { id: 'sku-1004', name: 'Slim Chino', variant: 'Black / 34', barcode: '10000004', price: 2450 },
-  { id: 'sku-1005', name: 'Leather Belt', variant: 'Brown', barcode: '10000005', price: 980 },
-  { id: 'sku-1006', name: 'Canvas Sneaker', variant: 'White / 42', barcode: '10000006', price: 3200 },
-  { id: 'sku-1007', name: 'Merino Polo', variant: 'Forest / M', barcode: '10000007', price: 2100 },
-  { id: 'sku-1008', name: 'Linen Trouser', variant: 'Sand / 32', barcode: '01-PP9800', price: 2750 },
+const PRODUCTS: Product[] = [
+  { id: 'tee-oxford', name: 'Oxford Shirt', price: 1850, category: 'T-Shirts', color: '#714B67' },
+  { id: 'tee-navy', name: 'Navy Oxford', price: 1850, category: 'T-Shirts', color: '#1f4e79' },
+  { id: 'tee-polo', name: 'Merino Polo', price: 2100, category: 'T-Shirts', color: '#017e84' },
+  { id: 'tee-linen', name: 'Linen Tee', price: 1450, category: 'T-Shirts', color: '#c4a574' },
+  { id: 'tee-stripe', name: 'Stripe Tee', price: 1250, category: 'T-Shirts', color: '#875A7B' },
+  { id: 'tee-crew', name: 'Crew Neck', price: 980, category: 'T-Shirts', color: '#4c6a92' },
+  { id: 'pant-chino', name: 'Slim Chino', price: 2450, category: 'Pants', color: '#8d6e4c' },
+  { id: 'pant-black', name: 'Black Chino', price: 2450, category: 'Pants', color: '#2c3e50' },
+  { id: 'pant-linen', name: 'Linen Trouser', price: 2750, category: 'Pants', color: '#b08968' },
+  { id: 'pant-denim', name: 'Straight Denim', price: 3200, category: 'Pants', color: '#3d5a80' },
+  { id: 'pant-cargo', name: 'Cargo Pant', price: 2950, category: 'Pants', color: '#6b705c' },
+  { id: 'pant-pleat', name: 'Pleated Trouser', price: 3100, category: 'Pants', color: '#5c4d7a' },
 ];
 
 const CUSTOMERS: Customer[] = [
-  { id: 'walk-in', name: 'Walk-in', phone: '' },
-  { id: 'c-1', name: 'Nadia Rahman', phone: '01711000001' },
-  { id: 'c-2', name: 'Imran Hossain', phone: '01822000002' },
-  { id: 'c-3', name: 'Farhana Akter', phone: '01933000003' },
+  { id: 'walk-in', name: 'Customer' },
+  { id: 'c-1', name: 'Nadia Rahman' },
+  { id: 'c-2', name: 'Imran Hossain' },
+  { id: 'c-3', name: 'Farhana Akter' },
 ];
 
+const CATEGORIES = ['Home', 'T-Shirts', 'Pants'] as const;
+
 function money(amount: number) {
-  return `৳ ${amount.toLocaleString('en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const [whole, fraction] = Math.abs(amount).toFixed(2).split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${amount < 0 ? '-' : ''}${grouped}.${fraction}`;
+}
+
+function lineTotal(line: CartLine) {
+  return line.price * line.qty * (1 - line.discount / 100);
 }
 
 export default function PosPage() {
   const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('Home');
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [customerId, setCustomerId] = useState('walk-in');
-  const [customerName, setCustomerName] = useState('Walk-in');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [discount, setDiscount] = useState('0');
-  const [notice, setNotice] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [mode, setMode] = useState<NumpadMode>('qty');
+  const [buffer, setBuffer] = useState('');
+  const [bufferFresh, setBufferFresh] = useState(true);
+  const [customerIndex, setCustomerIndex] = useState(0);
+  const [paidNote, setPaidNote] = useState<string | null>(null);
 
-  const matches = useMemo(() => {
+  const visibleProducts = useMemo(() => {
     const term = query.trim().toLowerCase();
-    if (!term) {
-      return [];
-    }
-    return CATALOG.filter(
-      (item) =>
-        item.barcode.toLowerCase() === term ||
-        item.name.toLowerCase().includes(term) ||
-        item.variant.toLowerCase().includes(term) ||
-        item.barcode.includes(term),
-    ).slice(0, 6);
-  }, [query]);
-
-  const subtotal = useMemo(() => cart.reduce((sum, line) => sum + line.price * line.qty, 0), [cart]);
-  const discountAmount = useMemo(() => {
-    const parsed = Number(discount);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      return 0;
-    }
-    return Math.min(parsed, subtotal);
-  }, [discount, subtotal]);
-  const taxable = Math.max(0, subtotal - discountAmount);
-  const vat = taxable * VAT_RATE;
-  const grandTotal = taxable + vat;
-
-  function addItem(item: CatalogItem) {
-    setCart((current) => {
-      const existing = current.find((line) => line.id === item.id);
-      if (existing) {
-        return current.map((line) => (line.id === item.id ? { ...line, qty: line.qty + 1 } : line));
-      }
-      return [...current, { id: item.id, name: item.name, variant: item.variant, price: item.price, qty: 1 }];
+    return PRODUCTS.filter((product) => {
+      const inCategory = category === 'Home' || product.category === category;
+      const matches = !term || product.name.toLowerCase().includes(term);
+      return inCategory && matches;
     });
-    setQuery('');
-    setNotice(null);
+  }, [category, query]);
+
+  const grandTotal = useMemo(() => cart.reduce((sum, line) => sum + lineTotal(line), 0), [cart]);
+  const customer = CUSTOMERS[customerIndex] ?? CUSTOMERS[0];
+
+  function selectLine(id: string) {
+    setSelectedId(id);
+    setBuffer('');
+    setBufferFresh(true);
   }
 
-  function commitScan() {
-    const term = query.trim().toLowerCase();
-    if (!term) {
+  function addProduct(product: Product) {
+    setPaidNote(null);
+    setCart((current) => {
+      const existing = current.find((line) => line.id === product.id);
+      if (existing) {
+        return current.map((line) => (line.id === product.id ? { ...line, qty: line.qty + 1 } : line));
+      }
+      return [...current, { id: product.id, name: product.name, price: product.price, qty: 1, discount: 0 }];
+    });
+    selectLine(product.id);
+  }
+
+  function updateSelected(nextBuffer: string) {
+    if (!selectedId) {
       return;
     }
-    const exact = CATALOG.find((item) => item.barcode.toLowerCase() === term || item.id === term);
-    const hit = exact ?? (matches.length === 1 ? matches[0] : undefined);
-    if (!hit) {
-      setNotice(matches.length > 1 ? 'Choose a product from the matches below.' : 'No sample product matches that code.');
+    setCart((current) => {
+      const line = current.find((row) => row.id === selectedId);
+      if (!line) {
+        return current;
+      }
+      if (nextBuffer === '' || nextBuffer === '.' || nextBuffer === '-') {
+        return current;
+      }
+      const value = Number(nextBuffer);
+      if (!Number.isFinite(value)) {
+        return current;
+      }
+      if (mode === 'qty') {
+        const qty = Math.trunc(Math.abs(value));
+        if (qty < 1) {
+          setSelectedId(null);
+          return current.filter((row) => row.id !== line.id);
+        }
+        return current.map((row) => (row.id === line.id ? { ...row, qty } : row));
+      }
+      if (mode === 'disc') {
+        const discount = Math.min(100, Math.max(0, value));
+        return current.map((row) => (row.id === line.id ? { ...row, discount } : row));
+      }
+      const price = Math.max(0, Math.abs(value));
+      return current.map((row) => (row.id === line.id ? { ...row, price } : row));
+    });
+  }
+
+  function pressDigit(digit: string) {
+    if (!selectedId) {
       return;
     }
-    addItem(hit);
+    const next = bufferFresh ? digit : `${buffer}${digit}`;
+    setBuffer(next);
+    setBufferFresh(false);
+    updateSelected(next);
   }
 
-  function setQty(id: string, next: number) {
-    setCart((current) =>
-      next < 1 ? current.filter((line) => line.id !== id) : current.map((line) => (line.id === id ? { ...line, qty: next } : line)),
-    );
+  function pressDot() {
+    if (!selectedId || mode === 'qty') {
+      return;
+    }
+    if (bufferFresh) {
+      setBuffer('0.');
+      setBufferFresh(false);
+      return;
+    }
+    if (buffer.includes('.')) {
+      return;
+    }
+    const next = `${buffer || '0'}.`;
+    setBuffer(next);
+    setBufferFresh(false);
   }
 
-  function selectCustomer(id: string) {
-    const customer = CUSTOMERS.find((row) => row.id === id) ?? CUSTOMERS[0];
-    setCustomerId(customer.id);
-    setCustomerName(customer.name);
-    setCustomerPhone(customer.phone);
+  function pressBackspace() {
+    if (!selectedId) {
+      return;
+    }
+    const next = bufferFresh ? '' : buffer.slice(0, -1);
+    setBuffer(next);
+    setBufferFresh(false);
+    if (next === '') {
+      if (mode === 'qty') {
+        setCart((current) => current.filter((row) => row.id !== selectedId));
+        setSelectedId(null);
+      }
+      return;
+    }
+    updateSelected(next);
   }
 
-  function checkout() {
+  function switchMode(nextMode: NumpadMode) {
+    setMode(nextMode);
+    setBuffer('');
+    setBufferFresh(true);
+  }
+
+  function pay() {
     if (cart.length === 0) {
-      setNotice('Add at least one item before checkout.');
       return;
     }
-    setNotice(`Sale held for ${customerName || 'Walk-in'} · ${money(grandTotal)}. Backend checkout comes next.`);
+    const label = customer.name === 'Customer' ? 'Walk-in' : customer.name;
+    setPaidNote(`Payment ${money(grandTotal)} · ${label}`);
     setCart([]);
-    setDiscount('0');
-    setQuery('');
+    setSelectedId(null);
+    setBuffer('');
+    setBufferFresh(true);
   }
+
+  const modeButton = (key: NumpadMode, label: string) => (
+    <button
+      type="button"
+      onClick={() => switchMode(key)}
+      className={`h-14 rounded-md text-base font-semibold shadow-sm transition active:scale-[0.98] sm:h-16 ${
+        mode === key ? 'bg-[#714B67] text-white' : 'bg-white text-[#714B67] hover:bg-[#f7f2f5]'
+      }`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <AppShell
       active="pos"
-      header={<p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">Point of Sale</p>}
-      mainClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-slate-900"
+      mainClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#ececec] p-0 dark:bg-slate-900"
     >
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-slate-200 lg:w-[70%] lg:flex-none lg:border-b-0 lg:border-r dark:border-slate-700">
-          <div className="border-b border-slate-200 bg-white px-4 py-4 sm:px-6 dark:border-slate-700 dark:bg-slate-800">
-            <label htmlFor="pos-scan" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-100">
-              Scan Barcode or Search Product
-            </label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                id="pos-scan"
-                autoFocus
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setNotice(null);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    commitScan();
-                  }
-                }}
-                placeholder="Scan a barcode or type a name, variant, or item code"
-                className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-base text-slate-900 outline-none ring-indigo-500/30 placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:bg-slate-900"
-              />
-            </div>
-            {matches.length > 0 ? (
-              <ul className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-slate-700 dark:border-slate-700 dark:bg-slate-900">
-                {matches.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => addItem(item)}
-                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-slate-50 dark:hover:bg-slate-700/50"
-                    >
-                      <span>
-                        <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">{item.name}</span>
-                        <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
-                          {item.variant} · {item.barcode}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+        <section className="flex min-h-0 w-full flex-[2] flex-col overflow-hidden bg-white shadow-[4px_0_16px_rgba(0,0,0,0.06)] lg:w-[38%] lg:flex-none dark:bg-slate-800 dark:shadow-none">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {cart.length === 0 ? (
+              <div className="flex h-full min-h-40 items-center justify-center px-6 text-center text-sm text-[#8f8f8f] dark:text-slate-400">
+                {paidNote ?? 'Select a product to start the order'}
+              </div>
+            ) : (
+              <ul>
+                {cart.map((line) => {
+                  const selected = line.id === selectedId;
+                  return (
+                    <li key={line.id}>
+                      <button
+                        type="button"
+                        onClick={() => selectLine(line.id)}
+                        className={`flex w-full flex-col gap-1 px-4 py-3 text-left ${
+                          selected ? 'bg-[#d7e8ea] dark:bg-teal-900/40' : 'hover:bg-[#f7f7f7] dark:hover:bg-slate-700/40'
+                        }`}
+                      >
+                        <span className="text-[15px] font-semibold text-[#212529] dark:text-slate-100">{line.name}</span>
+                        <span className="flex items-baseline justify-between gap-3 text-sm text-[#4c4c4c] dark:text-slate-300">
+                          <span>
+                            {line.qty} × {money(line.price)}
+                            {line.discount > 0 ? `  ·  ${line.discount}%` : ''}
+                          </span>
+                          <span className="text-base font-semibold tabular-nums text-[#212529] dark:text-slate-100">
+                            {money(lineTotal(line))}
+                          </span>
                         </span>
-                      </span>
-                      <span className="shrink-0 text-sm font-semibold text-slate-800 dark:text-slate-100">{money(item.price)}</span>
-                    </button>
-                  </li>
-                ))}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
-            ) : null}
-            {notice ? <p className="mt-3 text-sm font-medium text-indigo-700 dark:text-indigo-300">{notice}</p> : null}
+            )}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800/80 dark:text-slate-200">
-                  <tr>
-                    <th className="px-4 py-3">Item Name</th>
-                    <th className="px-4 py-3">Variant</th>
-                    <th className="px-4 py-3 text-right">Price</th>
-                    <th className="px-4 py-3 text-center">QTY</th>
-                    <th className="px-4 py-3 text-right">Subtotal</th>
-                    <th className="px-4 py-3 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cart.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
-                        Cart is empty. Scan a barcode or pick a sample product.
-                      </td>
-                    </tr>
-                  ) : (
-                    cart.map((line) => (
-                      <tr key={line.id} className="border-t border-slate-100 dark:border-slate-700">
-                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{line.name}</td>
-                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{line.variant}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-200">{money(line.price)}</td>
-                        <td className="px-4 py-3">
-                          <div className="mx-auto flex w-fit items-center rounded-full border border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-900">
-                            <button
-                              type="button"
-                              aria-label={`Decrease ${line.name}`}
-                              onClick={() => setQty(line.id, line.qty - 1)}
-                              className="inline-flex h-9 w-9 items-center justify-center text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-                            >
-                              <Minus className="h-4 w-4" />
-                            </button>
-                            <span className="w-8 text-center text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">{line.qty}</span>
-                            <button
-                              type="button"
-                              aria-label={`Increase ${line.name}`}
-                              onClick={() => setQty(line.id, line.qty + 1)}
-                              className="inline-flex h-9 w-9 items-center justify-center text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-                            >
-                              <Plus className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-                          {money(line.price * line.qty)}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            aria-label={`Remove ${line.name}`}
-                            onClick={() => setCart((current) => current.filter((row) => row.id !== line.id))}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+          <div className="grid shrink-0 grid-cols-4 gap-1.5 bg-[#f4f4f4] p-2 dark:bg-slate-900">
+            {['1', '2', '3'].map((digit) => (
+              <button key={digit} type="button" onClick={() => pressDigit(digit)} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
+                {digit}
+              </button>
+            ))}
+            {modeButton('qty', 'Qty')}
+            {['4', '5', '6'].map((digit) => (
+              <button key={digit} type="button" onClick={() => pressDigit(digit)} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
+                {digit}
+              </button>
+            ))}
+            {modeButton('disc', 'Disc')}
+            {['7', '8', '9'].map((digit) => (
+              <button key={digit} type="button" onClick={() => pressDigit(digit)} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
+                {digit}
+              </button>
+            ))}
+            {modeButton('price', 'Price')}
+            <button type="button" aria-label="Backspace" onClick={pressBackspace} className="flex h-14 items-center justify-center rounded-md bg-white text-[#714B67] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800">
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M20 6H9l-6 6 6 6h11a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1z" />
+                <path d="m14 10-4 4m0-4 4 4" />
+              </svg>
+            </button>
+            <button type="button" onClick={() => pressDigit('0')} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
+              0
+            </button>
+            <button type="button" onClick={pressDot} className="h-14 rounded-md bg-white text-xl font-medium text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100">
+              .
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!selectedId || mode === 'qty') {
+                  return;
+                }
+                const next = buffer.startsWith('-') ? buffer.slice(1) : `-${buffer || '0'}`;
+                setBuffer(next);
+                setBufferFresh(false);
+                updateSelected(next);
+              }}
+              className="h-14 rounded-md bg-white text-lg font-semibold text-[#212529] shadow-sm active:bg-[#ececec] sm:h-16 dark:bg-slate-800 dark:text-slate-100"
+            >
+              +/−
+            </button>
+          </div>
+
+          <div className="grid shrink-0 grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)] gap-2 bg-white p-2 dark:bg-slate-800">
+            <button
+              type="button"
+              onClick={() => setCustomerIndex((index) => (index + 1) % CUSTOMERS.length)}
+              className="flex h-16 items-center justify-center gap-2 rounded-md bg-[#f6f6f6] px-3 text-sm font-semibold text-[#212529] active:bg-[#ececec] dark:bg-slate-700 dark:text-slate-100"
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-[#714B67]" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <circle cx="12" cy="8" r="3" />
+                <path d="M5 19c1.5-3 3.8-4.5 7-4.5S17.5 16 19 19" />
+              </svg>
+              <span className="truncate">{customer.name}</span>
+            </button>
+            <button
+              type="button"
+              onClick={pay}
+              className="flex h-16 items-center justify-between gap-3 rounded-md bg-[#714B67] px-4 text-white shadow-md active:bg-[#5d3e55]"
+            >
+              <span className="text-lg font-semibold">Payment</span>
+              <span className="text-xl font-bold tabular-nums">{money(grandTotal)}</span>
+            </button>
           </div>
         </section>
 
-        <aside className="flex w-full shrink-0 flex-col bg-white lg:w-[30%] dark:bg-slate-800">
-          <div className="flex-1 space-y-6 overflow-auto p-5 sm:p-6">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Order Summary</h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{cart.reduce((sum, line) => sum + line.qty, 0)} items in this sale</p>
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#f0eeee] dark:bg-slate-900">
+          <div className="shrink-0 space-y-3 px-3 pb-2 pt-3">
+            <div className="relative">
+              <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8f8f8f]" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search products..."
+                className="h-12 w-full rounded-md border-0 bg-white pl-12 pr-4 text-base text-[#212529] shadow-sm outline-none ring-[#714B67]/30 placeholder:text-[#9a9a9a] focus:ring-2 dark:bg-slate-800 dark:text-slate-100"
+              />
             </div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {CATEGORIES.map((chip) => {
+                const active = chip === category;
+                return (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => setCategory(chip)}
+                    className={`h-11 shrink-0 rounded-full px-5 text-sm font-semibold ${
+                      active
+                        ? 'bg-[#714B67] text-white'
+                        : 'bg-white text-[#4c4c4c] shadow-sm dark:bg-slate-800 dark:text-slate-200'
+                    }`}
+                  >
+                    {chip}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-            <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Customer</h3>
-              <label htmlFor="pos-customer" className="mt-3 mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
-                Select customer
-              </label>
-              <select
-                id="pos-customer"
-                value={customerId}
-                onChange={(event) => selectCustomer(event.target.value)}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-              >
-                {CUSTOMERS.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.name}
-                    {customer.phone ? ` · ${customer.phone}` : ''}
-                  </option>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+            {visibleProducts.length === 0 ? (
+              <p className="px-2 py-10 text-center text-sm text-[#8f8f8f]">No products in this category.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+                {visibleProducts.map((product) => (
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() => addProduct(product)}
+                    className="overflow-hidden rounded-md bg-white text-left shadow-sm active:scale-[0.98] dark:bg-slate-800"
+                  >
+                    <div className="flex aspect-[4/3] items-center justify-center" style={{ backgroundColor: product.color }}>
+                      <span className="text-3xl font-semibold text-white/90">{product.name.slice(0, 1)}</span>
+                    </div>
+                    <div className="px-3 py-3">
+                      <p className="line-clamp-2 min-h-10 text-sm font-semibold text-[#212529] dark:text-slate-100">{product.name}</p>
+                      <p className="mt-1 text-sm font-medium tabular-nums text-[#714B67] dark:text-[#e7c6d8]">{money(product.price)}</p>
+                    </div>
+                  </button>
                 ))}
-                <option value="custom">Custom</option>
-              </select>
-              <label htmlFor="pos-customer-name" className="mt-3 mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
-                Name
-              </label>
-              <input
-                id="pos-customer-name"
-                value={customerName}
-                onChange={(event) => {
-                  setCustomerId('custom');
-                  setCustomerName(event.target.value);
-                }}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-              />
-              <label htmlFor="pos-customer-phone" className="mt-3 mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
-                Phone
-              </label>
-              <input
-                id="pos-customer-phone"
-                value={customerPhone}
-                onChange={(event) => {
-                  setCustomerId('custom');
-                  setCustomerPhone(event.target.value);
-                }}
-                placeholder="01XXXXXXXXX"
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-              />
-            </div>
-
-            <dl className="space-y-3 text-sm">
-              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
-                <dt>Subtotal</dt>
-                <dd className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{money(subtotal)}</dd>
               </div>
-              <div className="flex items-center justify-between gap-3 text-slate-600 dark:text-slate-300">
-                <dt>
-                  <label htmlFor="pos-discount">Discount</label>
-                </dt>
-                <dd>
-                  <input
-                    id="pos-discount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={discount}
-                    onChange={(event) => setDiscount(event.target.value)}
-                    className="h-10 w-28 rounded-xl border border-slate-200 bg-slate-50 px-3 text-right text-sm font-semibold tabular-nums text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-                  />
-                </dd>
-              </div>
-              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
-                <dt>VAT / Tax (5%)</dt>
-                <dd className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{money(vat)}</dd>
-              </div>
-              <div className="flex items-center justify-between border-t border-slate-200 pt-3 text-base dark:border-slate-700">
-                <dt className="font-semibold text-slate-900 dark:text-slate-100">Grand Total</dt>
-                <dd className="text-xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{money(grandTotal)}</dd>
-              </div>
-            </dl>
+            )}
           </div>
-
-          <div className="border-t border-slate-200 p-5 sm:p-6 dark:border-slate-700">
-            <button
-              type="button"
-              onClick={checkout}
-              className="h-16 w-full rounded-2xl bg-indigo-600 text-lg font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-500"
-            >
-              Checkout / Pay
-            </button>
-          </div>
-        </aside>
+        </section>
       </div>
     </AppShell>
   );
