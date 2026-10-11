@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Building2,
   Contact,
@@ -54,9 +54,16 @@ type SidebarProps = {
 };
 
 export function Sidebar({ active, className = '', collapsed = false, onToggle, onNavigate }: SidebarProps) {
-  const [isAdmin] = useState(() => isAdminRole(getStoredRole()));
-  const [isPlatform] = useState(() => isPlatformRole(getStoredRole()));
-  const [isOwner] = useState(() => isSystemOwner(getStoredRole()));
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const role = mounted ? getStoredRole() : null;
+  const isAdmin = mounted && isAdminRole(role);
+  const isPlatform = mounted && isPlatformRole(role);
+  const isOwner = mounted && isSystemOwner(role);
   const router = useRouter();
   const links = (!isAdmin ? NAV_LINKS.filter((link) => CASHIER_KEYS.has(link.key)) : NAV_LINKS).filter((link) => {
     if (link.key === 'tenants') {
