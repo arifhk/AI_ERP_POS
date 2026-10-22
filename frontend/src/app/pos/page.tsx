@@ -156,20 +156,9 @@ function money(amount: number) {
   return `${amount < 0 ? '-' : ''}${grouped}.${fraction}`;
 }
 
-function clampPercent(value: string) {
+function numericInput(value: string) {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-  return Math.min(100, Math.max(0, parsed));
-}
-
-function formatAmountInput(value: number) {
-  return (Math.round(value * 100) / 100).toFixed(2);
-}
-
-function formatPercentInput(value: number) {
-  return String(Math.round(value * 100) / 100);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 }
 
 type TenderEntry = { on: boolean; amount: string; bankName: string; accountNumber: string };
@@ -294,15 +283,12 @@ export default function PosPage() {
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
   const [isSearchCustomerOpen, setIsSearchCustomerOpen] = useState(false);
   const [isReprintOpen, setIsReprintOpen] = useState(false);
-  const [orderDiscountPercent, setOrderDiscountPercent] = useState('0');
-  const [orderDiscountAmount, setOrderDiscountAmount] = useState('0.00');
+  const [discountPercent, setDiscountPercent] = useState('0');
+  const [flatDiscountAmount, setFlatDiscountAmount] = useState('0.00');
   const [returnAmount, setReturnAmount] = useState(0);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const customerNameRef = useRef<HTMLInputElement>(null);
   const latestIdRef = useRef<string | null>(null);
-  const discountEditRef = useRef<'percent' | 'amount'>('percent');
-  const percentRef = useRef('0');
-  const amountRef = useRef('0.00');
   const tenderRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const printResetRef = useRef(false);
   const savingRef = useRef(false);
@@ -371,41 +357,23 @@ export default function PosPage() {
     const vat = cart.reduce((sum, line) => sum + lineVat(line), 0);
     const qty = cart.reduce((sum, line) => sum + line.qty, 0);
     const sd = 0;
-    const discountBase = Math.max(0, total + sd + vat - totalLineDiscount - returnAmount);
-    const parsedAmount = Number(orderDiscountAmount);
-    const orderAmount = Number.isFinite(parsedAmount) ? Math.min(discountBase, Math.max(0, parsedAmount)) : 0;
-    const discount = totalLineDiscount + orderAmount;
-    const subTotal = discountBase - orderAmount;
+    const subTotal = Math.max(0, total + sd + vat - totalLineDiscount - returnAmount);
+    const calculatedPercentDiscount = (subTotal * numericInput(discountPercent)) / 100;
+    const flatDiscount = numericInput(flatDiscountAmount);
+    const finalTotalDiscount = calculatedPercentDiscount + flatDiscount;
+    const net = Math.max(0, subTotal - finalTotalDiscount);
     return {
       lines: cart.length,
       qty,
       total,
       sd,
       vat,
-      discountBase,
-      discount,
+      discount: totalLineDiscount + Math.min(subTotal, finalTotalDiscount),
       returnAmount,
       subTotal,
-      net: subTotal,
+      net,
     };
-  }, [cart, orderDiscountAmount, returnAmount]);
-
-  percentRef.current = orderDiscountPercent;
-  amountRef.current = orderDiscountAmount;
-
-  useEffect(() => {
-    const base = totals.discountBase;
-    if (discountEditRef.current === 'amount') {
-      const raw = Number(amountRef.current);
-      const amount = Number.isFinite(raw) ? Math.min(Math.max(0, raw), base) : 0;
-      const percent = base > 0 ? (amount / base) * 100 : 0;
-      setOrderDiscountPercent(formatPercentInput(percent));
-      setOrderDiscountAmount(formatAmountInput(amount));
-      return;
-    }
-    const percent = clampPercent(percentRef.current);
-    setOrderDiscountAmount(formatAmountInput((base * percent) / 100));
-  }, [totals.discountBase]);
+  }, [cart, discountPercent, flatDiscountAmount, returnAmount]);
 
   const totalPaid = tenderTotal(tenders, paymentMethods);
   const dueAmount = Math.max(0, Math.round((totals.net - totalPaid) * 100) / 100);
@@ -539,9 +507,8 @@ export default function PosPage() {
     setCustomerAddress('');
     setCustomerCode('');
     setCustomerId(null);
-    setOrderDiscountPercent('0');
-    setOrderDiscountAmount('0.00');
-    discountEditRef.current = 'percent';
+    setDiscountPercent('0');
+    setFlatDiscountAmount('0.00');
     setReturnAmount(0);
     focusBarcode();
   }
@@ -563,8 +530,8 @@ export default function PosPage() {
         phone: customerMobile,
         address: customerAddress,
       },
-      orderDiscountPercent,
-      orderDiscountAmount,
+      orderDiscountPercent: discountPercent,
+      orderDiscountAmount: flatDiscountAmount,
       returnAmount,
     };
     const next = [entry, ...heldInvoices];
@@ -586,9 +553,8 @@ export default function PosPage() {
     setCustomerAddress('');
     setCustomerCode('');
     setCustomerId(null);
-    setOrderDiscountPercent('0');
-    setOrderDiscountAmount('0.00');
-    discountEditRef.current = 'percent';
+    setDiscountPercent('0');
+    setFlatDiscountAmount('0.00');
     setReturnAmount(0);
     setStatus('Invoice cancelled.');
     setPayOpen(false);
@@ -596,23 +562,11 @@ export default function PosPage() {
   }
 
   function onDiscountPercentChange(value: string) {
-    discountEditRef.current = 'percent';
-    setOrderDiscountPercent(value);
-    setOrderDiscountAmount(formatAmountInput((totals.discountBase * clampPercent(value)) / 100));
+    setDiscountPercent(value);
   }
 
   function onDiscountAmountChange(value: string) {
-    discountEditRef.current = 'amount';
-    const parsed = Number(value);
-    if (value.trim() === '' || !Number.isFinite(parsed)) {
-      setOrderDiscountAmount(value);
-      setOrderDiscountPercent('0');
-      return;
-    }
-    const capped = Math.min(Math.max(0, parsed), totals.discountBase);
-    setOrderDiscountAmount(parsed > totals.discountBase ? formatAmountInput(capped) : value);
-    const percent = totals.discountBase > 0 ? (capped / totals.discountBase) * 100 : 0;
-    setOrderDiscountPercent(formatPercentInput(percent));
+    setFlatDiscountAmount(value);
   }
 
   function openPay() {
@@ -721,9 +675,8 @@ export default function PosPage() {
     setCustomerAddress('');
     setCustomerCode('');
     setCustomerId(null);
-    setOrderDiscountPercent('0');
-    setOrderDiscountAmount('0.00');
-    discountEditRef.current = 'percent';
+    setDiscountPercent('0');
+    setFlatDiscountAmount('0.00');
     setReturnAmount(0);
     setPayError(null);
     setNewMethod('');
@@ -827,7 +780,7 @@ export default function PosPage() {
           total: totals.total,
           sd: totals.sd,
           vat: totals.vat,
-          discountPercent: orderDiscountPercent,
+          discountPercent: discountPercent,
           discount: totals.discount,
           returnAmount: totals.returnAmount,
           subTotal: totals.subTotal,
@@ -900,9 +853,8 @@ export default function PosPage() {
     setCustomerName(customer.name);
     setCustomerMobile(customer.phone);
     setCustomerAddress(customer.address);
-    setOrderDiscountPercent(invoice.orderDiscountPercent || '0');
-    setOrderDiscountAmount(invoice.orderDiscountAmount || '0.00');
-    discountEditRef.current = 'percent';
+    setDiscountPercent(invoice.orderDiscountPercent || '0');
+    setFlatDiscountAmount(invoice.orderDiscountAmount || '0.00');
     setReturnAmount(invoice.returnAmount || 0);
     setIsRecallOpen(false);
     setStatus(null);
@@ -1262,16 +1214,16 @@ export default function PosPage() {
               <label className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
                 <span>Discount (%)</span>
                 <input
-                  value={orderDiscountPercent}
+                  value={discountPercent}
                   onChange={(event) => onDiscountPercentChange(event.target.value)}
                   inputMode="decimal"
                   className="h-7 w-28 rounded border border-blue-400 bg-white px-2 text-right text-xs font-semibold tabular-nums text-black outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </label>
               <label className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
-                <span>Discount</span>
+                <span>Discount (Amount)</span>
                 <input
-                  value={orderDiscountAmount}
+                  value={flatDiscountAmount}
                   onChange={(event) => onDiscountAmountChange(event.target.value)}
                   inputMode="decimal"
                   className="h-7 w-28 rounded border border-blue-400 bg-white px-2 text-right text-xs font-semibold tabular-nums text-black outline-none focus:ring-2 focus:ring-blue-500"
