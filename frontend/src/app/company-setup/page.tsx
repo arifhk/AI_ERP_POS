@@ -4,7 +4,7 @@ import { useEffect, useState, type DragEvent, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { AppShell } from '../../components/AppShell';
-import { API_BASE, authHeaders } from '../../utils/api';
+import { apiFetch } from '../../utils/api';
 import { canManageCompany, getStoredRole } from '../../utils/auth';
 import {
   DEFAULT_INVOICE_SETTINGS,
@@ -44,7 +44,7 @@ export default function CompanySetupPage() {
     setSettings(cached);
     void (async () => {
       try {
-        const response = await fetch(`${API_BASE}/settings/invoice`, { headers: authHeaders(), cache: 'no-store' });
+        const response = await apiFetch('/api/company');
         if (!response.ok) {
           return;
         }
@@ -112,14 +112,19 @@ export default function CompanySetupPage() {
     const next = { ...settings, companyName: settings.companyName.trim() || DEFAULT_INVOICE_SETTINGS.companyName };
     writeInvoiceSettings(next);
     setSettings(next);
-    const response = await fetch(`${API_BASE}/settings/invoice`, {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('Your session expired. Sign in again, then save the invoice design.');
+    }
+    const response = await apiFetch('/api/company', {
       method: 'PUT',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toInvoicePayload(next)),
     });
     if (!response.ok) {
-      const failed = (await response.json().catch(() => null)) as { detail?: string } | null;
-      throw new Error(failed?.detail || 'Saved on this register. The company record could not be updated.');
+      const failed = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+      const detail = typeof failed?.detail === 'string' ? failed.detail : '';
+      throw new Error(detail || 'Saved on this register. The company record could not be updated.');
     }
     const payload = (await response.json()) as Parameters<typeof fromInvoicePayload>[0];
     const saved = fromInvoicePayload(payload);

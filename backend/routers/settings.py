@@ -5,7 +5,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from auth import get_current_user
 from database import get_session
 from models import CompanyInvoiceSetting, SystemSetting, User
-from rbac import require_tenant_manager, write_tenant
+from rbac import require_company_editor, write_tenant
 
 router = APIRouter()
 
@@ -100,7 +100,7 @@ async def write_invoice_settings(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> InvoiceSettingsBody:
-    require_tenant_manager(current_user)
+    require_company_editor(current_user)
     if payload.paper_size not in {"80mm POS", "A4", "A5"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Paper size must be 80mm POS, A4, or A5")
     if len(payload.logo_data) > 700_000:

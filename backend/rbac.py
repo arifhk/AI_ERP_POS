@@ -97,6 +97,16 @@ def require_tenant_manager(user: User) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant Admin access required.")
 
 
+def require_company_editor(user: User) -> None:
+    """Company Setup writes: Tenant Admin, Super Admin, and System Owner."""
+    role = normalize_role(user.role)
+    if role not in {UserRole.TENANT_ADMIN.value, UserRole.SUPER_ADMIN.value, UserRole.SYSTEM_OWNER.value}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Company setup requires a Tenant Admin, Super Admin, or System Owner.",
+        )
+
+
 def assert_role_assignment(actor: User, target_role: str, existing: Optional[User] = None) -> None:
     """Only a System Owner may create, edit, or demote a System Owner or Super Admin."""
     if existing is not None and normalize_role(existing.role) in _PRIVILEGED and not is_system_owner(actor):
