@@ -251,7 +251,8 @@ function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
         <div className="flex justify-between"><span>Discount</span><span className="tabular-nums">{money(sale.discount)}</span></div>
         <div className="flex justify-between"><span>VAT</span><span className="tabular-nums">{money(sale.vat)}</span></div>
         <div className="flex justify-between font-bold"><span>Net Total</span><span className="tabular-nums">{money(sale.net)}</span></div>
-        <div className="flex justify-between"><span>Paid</span><span className="tabular-nums">{money(sale.paid)}</span></div>
+        <div className="flex justify-between"><span>Paid Amount</span><span className="tabular-nums">{money(sale.paid)}</span></div>
+        <div className="flex justify-between"><span>Change Amount</span><span className="tabular-nums">{money(sale.change)}</span></div>
         <div className="flex justify-between"><span>Due</span><span className="tabular-nums">{money(due)}</span></div>
         {sale.payments.map((payment) => (
           <div key={payment.method} className="flex justify-between gap-2">
