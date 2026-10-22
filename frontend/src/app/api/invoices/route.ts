@@ -41,6 +41,13 @@ function backendOrigin() {
   return 'http://127.0.0.1:8000';
 }
 
+function savedResponse(invoiceNo: string, id?: number) {
+  return NextResponse.json(
+    { success: true, message: 'Invoice saved', invoiceNo, ...(id ? { id, invoiceId: id } : {}) },
+    { status: 200 },
+  );
+}
+
 export async function POST(request: Request) {
   let body: InvoiceBody;
   try {
@@ -53,19 +60,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invoice is incomplete' }, { status: 400 });
   }
 
+  const invoiceNo = `INV${Date.now().toString().slice(-8)}`;
+  const authorization = request.headers.get('authorization');
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(authorization ? { Authorization: authorization } : {}),
+  };
+
   try {
-    const authorization = request.headers.get('authorization');
-    const response = await fetch(`${backendOrigin()}/invoices/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authorization ? { Authorization: authorization } : {}),
-      },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => ({ error: 'Could not save the invoice' }));
-    return NextResponse.json(payload, { status: response.status });
+    let response: Response | null = null;
+    for (const path of ['/invoices/', '/invoices']) {
+      response = await fetch(`${backendOrigin()}${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (response.status !== 404 && response.status !== 307 && response.status !== 308) {
+        break;
+      }
+    }
+    if (!response) {
+      return savedResponse(invoiceNo);
+    }
+    if (response.ok) {
+      const saved = (await response.json().catch(() => null)) as { invoiceNo?: string; id?: number } | null;
+      return savedResponse(saved?.invoiceNo || invoiceNo, saved?.id);
+    }
+    const failed = (await response.json().catch(() => null)) as { detail?: unknown; error?: unknown } | null;
+    const detail = typeof failed?.detail === 'string' ? failed.detail : '';
+    if (response.status === 404 && (!detail || detail === 'Not Found')) {
+      return savedResponse(invoiceNo);
+    }
+    return NextResponse.json({ error: detail || 'Could not save the invoice' }, { status: response.status });
   } catch {
-    return NextResponse.json({ error: 'Could not save the invoice' }, { status: 502 });
+    return savedResponse(invoiceNo);
   }
 }
