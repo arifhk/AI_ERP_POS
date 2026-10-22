@@ -12,7 +12,7 @@ export type PosCustomerRow = {
   address: string;
 };
 
-const SEED: PosCustomerRow[] = [
+export const SEED: PosCustomerRow[] = [
   { id: 'C-1001', firstName: 'Nadia', phone: '01711000001', type: 'VIP PASS', discount: 10, doe: '2024-01-12', address: 'Bashundhara R/A' },
   { id: 'C-1002', firstName: 'Imran', phone: '01822000002', type: 'Regular', discount: 0, doe: '2024-06-03', address: 'Gulshan 2' },
   { id: 'C-1003', firstName: 'Farhana', phone: '01933000003', type: 'VIP PASS', discount: 5, doe: '2025-02-18', address: 'Dhanmondi 15' },
