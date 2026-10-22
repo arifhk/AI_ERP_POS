@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -104,16 +105,17 @@ async def change_user_role(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Use Transfer Ownership to give up System Owner.")
     assert_role_assignment(current_user, role, existing=user)
     previous = normalize_role(user.role)
-    user.role = role
     if role in {UserRole.SYSTEM_OWNER.value, UserRole.SUPER_ADMIN.value}:
-        user.tenant_id = None
+        next_tenant_id = None
     elif payload.tenant_id is not None:
         tenant = await session.get(Tenant, payload.tenant_id)
         if tenant is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
-        user.tenant_id = payload.tenant_id
+        next_tenant_id = payload.tenant_id
     elif user.tenant_id is None:
-        user.tenant_id = 1
+        next_tenant_id = 1
+    else:
+        next_tenant_id = user.tenant_id
     _audit(
         session,
         current_user,
@@ -122,9 +124,15 @@ async def change_user_role(
         {"role": {"old": previous, "new": role}},
         f"System Owner changed {user.email} from {previous} to {role}.",
     )
-    session.add(user)
+    await session.execute(
+        text("UPDATE users SET role = :role, tenant_id = :tenant_id WHERE id = :id"),
+        {"role": role, "tenant_id": next_tenant_id, "id": user_id},
+    )
     await session.commit()
-    await session.refresh(user)
+    session.expire_all()
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     tenant_name = "Platform"
     if user.tenant_id is not None:
         tenant = await session.get(Tenant, user.tenant_id)

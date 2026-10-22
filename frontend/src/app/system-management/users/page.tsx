@@ -60,18 +60,23 @@ export default function SystemUsersPage() {
   async function saveRole(user: ManagedUser, role: string) {
     setNotice(null);
     setError(null);
-    const response = await apiFetch(`${API_BASE}/system/users/${user.id}/role`, {
+    const response = await apiFetch('/api/users', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, tenant_id: user.tenant_id }),
+      body: JSON.stringify({ id: user.id, role, tenant_id: user.tenant_id }),
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { detail?: string };
       setError(typeof body.detail === 'string' ? body.detail : 'Could not change that role.');
       return;
     }
-    setNotice(`${user.email} is now ${role.replace(/_/g, ' ')}.`);
-    await mutate();
+    const saved = (await response.json()) as ManagedUser;
+    setNotice(`${user.email} is now ${saved.role.replace(/_/g, ' ')}.`);
+    await mutate(
+      (current) => (current ?? []).map((row) => (row.id === saved.id ? { ...row, ...saved } : row)),
+      { revalidate: true },
+    );
+    router.refresh();
   }
 
   async function savePassword(event: FormEvent) {

@@ -40,7 +40,7 @@ const ROUTE_DATA: Record<string, string[]> = {
   '/expenses': [`${API_BASE}/expenses/`],
   '/customers': [`${API_BASE}/customers/`],
   '/pos': [`${API_BASE}/products/`],
-  '/users': [`${API_BASE}/users/?limit=200`],
+  '/users': ['/api/users?limit=200'],
   '/tenants': [`${API_BASE}/tenants/`],
   '/branches': [`${API_BASE}/branches/`],
   '/master-data/categories': [`${API_BASE}/masters/catalog`, `${API_BASE}/approvals/`],

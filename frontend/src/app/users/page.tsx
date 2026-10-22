@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppShell, PageHeading } from '../../components/AppShell';
 import { API_BASE, apiFetch } from '../../utils/api';
 import { useApi } from '../../utils/query';
@@ -23,7 +24,8 @@ const emptyForm = {
 };
 
 export default function UsersPage() {
-  const { data, error: loadError, isLoading, mutate } = useApi<User[]>(`${API_BASE}/users/?limit=200`);
+  const router = useRouter();
+  const { data, error: loadError, isLoading, mutate } = useApi<User[]>('/api/users?limit=200');
   const users = data ?? [];
   const loading = isLoading && !data;
   const error = loadError ? 'Unable to load users from the server.' : null;
@@ -103,6 +105,7 @@ export default function UsersPage() {
 
       setApproveUser(null);
       await mutate();
+      router.refresh();
     } catch (caught) {
       setApproveError(caught instanceof Error ? caught.message : 'Could not approve the user.');
     } finally {
@@ -145,6 +148,7 @@ export default function UsersPage() {
       setModalOpen(false);
       setForm(emptyForm);
       await mutate();
+      router.refresh();
       window.alert('User added successfully!');
     } catch (caught) {
       setFormError(caught instanceof Error ? caught.message : 'Could not create the user.');

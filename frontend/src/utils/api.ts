@@ -29,7 +29,7 @@ export function authHeaders(init?: HeadersInit): Headers {
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const headers = authHeaders(init?.headers);
 
-  const response = await fetch(input, { ...init, headers });
+  const response = await fetch(input, { ...init, cache: 'no-store', headers });
 
   if (
     response.status === 401 &&
