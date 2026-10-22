@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
+import { toast } from 'sonner';
 import { PosCameraScanner } from '../../components/PosCameraScanner';
 import { AddCustomerModal, type NewCustomerForm } from '../../components/pos/AddCustomerModal';
 import { ReprintModal } from '../../components/pos/ReprintModal';
@@ -186,6 +187,16 @@ function lineTotal(line: CartLine) {
   return lineGross(line) - lineDiscount(line) + lineVat(line);
 }
 
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function cartProductId(id: string) {
+  const raw = /^(?:p|v)-(.+)$/.exec(id)?.[1] ?? id;
+  const numeric = Number(raw);
+  return Number.isInteger(numeric) ? numeric : raw;
+}
+
 function paymentLabel(payment: SaleReceipt['payments'][number]) {
   return payment.bankName ? `${payment.method} - ${payment.bankName}` : payment.method;
 }
@@ -268,6 +279,9 @@ export default function PosPage() {
   const percentRef = useRef('0');
   const amountRef = useRef('0.00');
   const tenderRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const printResetRef = useRef(false);
+  const savingRef = useRef(false);
+  const resetPOSRef = useRef<() => void>(() => {});
   const [payOpen, setPayOpen] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState(['Cash', 'BKASH', 'NAGAD', 'Card']);
   const [banks, setBanks] = useState(['City Bank', 'Brac Bank', 'DBBL']);
@@ -275,6 +289,9 @@ export default function PosPage() {
   const [newBank, setNewBank] = useState('');
   const [tenders, setTenders] = useState<TenderState>(() => blankTenders(DEFAULT_PAYMENT_METHODS));
   const [payError, setPayError] = useState<string | null>(null);
+  const [savingInvoice, setSavingInvoice] = useState(false);
+  const paymentMethodsRef = useRef(paymentMethods);
+  paymentMethodsRef.current = paymentMethods;
   const [receipt, setReceipt] = useState<SaleReceipt | null>(null);
   const [clock, setClock] = useState('11 Oct 2026');
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
@@ -631,10 +648,14 @@ export default function PosPage() {
     // TODO: POST the new bank name to the backend banks API so every terminal sees it.
   }
 
-  function resetSale() {
+  function resetPOS() {
+    printResetRef.current = false;
     latestIdRef.current = null;
     setCart([]);
     setSelectedId(null);
+    setScanCode('');
+    setScanNotice(null);
+    setStatus(null);
     setCustomerMobile('');
     setCustomerName('');
     setCustomerAddress('');
@@ -645,18 +666,25 @@ export default function PosPage() {
     discountEditRef.current = 'percent';
     setReturnAmount(0);
     setPayError(null);
-    setTenders(blankTenders(paymentMethods));
+    setNewMethod('');
+    setNewBank('');
+    setTenders(blankTenders(paymentMethodsRef.current));
     setPayOpen(false);
+    setReceipt(null);
+    focusBarcode();
   }
 
-  function confirmPay() {
+  async function saveInvoice() {
+    if (savingRef.current) {
+      return;
+    }
     const paid = tenderTotal(tenders, paymentMethods);
-    const shortfall = Math.round((totals.net - paid) * 100) / 100;
+    const shortfall = roundMoney(totals.net - paid);
     if (shortfall > 0) {
       setPayError(`Payment Incomplete! Due Amount: ${money(shortfall)} TK`);
       return;
     }
-    const payments = paymentMethods.flatMap((method) => {
+    const methods = paymentMethods.flatMap((method) => {
       const tender = tenders[method];
       if (!tender?.on || !(Number(tender.amount) > 0)) {
         return [];
@@ -665,39 +693,97 @@ export default function PosPage() {
       return [
         {
           method,
-          amount: Number(tender.amount),
+          amount: roundMoney(Number(tender.amount)),
           ...(card && tender.bankName ? { bankName: tender.bankName } : {}),
           ...(card && tender.accountNumber.trim() ? { accountNumber: tender.accountNumber.trim() } : {}),
         },
       ];
     });
-    const who = currentOrder.customer.name || currentOrder.customer.phone || 'Walk-in';
-    setStatus(`Paid ${money(totals.net)} · ${payments.map((payment) => payment.method).join(', ') || 'Cash'} · ${who}`);
-    setPayOpen(false);
-    setReceipt({
-      invoiceNo: `INV${Date.now().toString().slice(-8)}`,
-      issuedAt: new Date().toLocaleString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-      customer: currentOrder.customer,
-      lines: cart.map((line) => ({ ...line })),
-      qty: totals.qty,
-      total: totals.total,
-      sd: totals.sd,
-      vat: totals.vat,
-      discountPercent: orderDiscountPercent,
-      discount: totals.discount,
-      returnAmount: totals.returnAmount,
-      subTotal: totals.subTotal,
-      net: totals.net,
-      payments,
-      paid,
-      change: Math.max(0, Math.round((paid - totals.net) * 100) / 100),
-    });
+    const change = Math.max(0, roundMoney(paid - totals.net));
+    const payload = {
+      customer: {
+        id: currentOrder.customer.id,
+        name: currentOrder.customer.name,
+        phone: currentOrder.customer.phone,
+        address: currentOrder.customer.address,
+      },
+      items: cart.map((line) => ({
+        productId: cartProductId(line.id),
+        barcode: line.barcode,
+        qty: line.qty,
+        unitPrice: roundMoney(line.price),
+        discount: roundMoney(lineDiscount(line)),
+        subtotal: roundMoney(lineGross(line) - lineDiscount(line)),
+      })),
+      payment: {
+        totalPayable: roundMoney(totals.net),
+        totalPaid: roundMoney(paid),
+        returnAmount: change,
+        methods,
+      },
+      summary: {
+        totalLine: totals.lines,
+        totalQty: totals.qty,
+        vat: roundMoney(totals.vat),
+        totalDiscount: roundMoney(totals.discount),
+        netAmount: roundMoney(totals.net),
+      },
+    };
+    savingRef.current = true;
+    setSavingInvoice(true);
+    setPayError(null);
+    try {
+      const response = await fetch('/api/invoices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error(`Invoice save failed (${response.status})`);
+      }
+      const saved = (await response.json()) as { invoiceNo?: string };
+      const invoiceNo = saved.invoiceNo || `INV${Date.now().toString().slice(-8)}`;
+      const who = currentOrder.customer.name || currentOrder.customer.phone || 'Walk-in';
+      toast.success('Invoice saved');
+      printResetRef.current = true;
+      flushSync(() => {
+        setStatus(`Paid ${money(totals.net)} · ${methods.map((payment) => payment.method).join(', ') || 'Cash'} · ${who}`);
+        setPayOpen(false);
+        setReceipt({
+          invoiceNo,
+          issuedAt: new Date().toLocaleString('en-GB', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+          customer: currentOrder.customer,
+          lines: cart.map((line) => ({ ...line })),
+          qty: totals.qty,
+          total: totals.total,
+          sd: totals.sd,
+          vat: totals.vat,
+          discountPercent: orderDiscountPercent,
+          discount: totals.discount,
+          returnAmount: totals.returnAmount,
+          subTotal: totals.subTotal,
+          net: totals.net,
+          payments: methods,
+          paid,
+          change,
+        });
+      });
+      window.setTimeout(() => window.print(), 50);
+    } catch (error) {
+      printResetRef.current = false;
+      const message = error instanceof Error ? error.message : 'Could not save the invoice.';
+      setPayError(message);
+      toast.error(message);
+    } finally {
+      savingRef.current = false;
+      setSavingInvoice(false);
+    }
   }
 
   function applyCustomer(row: PosCustomerRow) {
@@ -757,22 +843,18 @@ export default function PosPage() {
     focusBarcode();
   }
 
+  resetPOSRef.current = resetPOS;
+
   useEffect(() => {
-    if (!receipt) {
-      return;
+    function onAfterPrint() {
+      if (!printResetRef.current) {
+        return;
+      }
+      resetPOSRef.current();
     }
-    function finishPrinting() {
-      resetSale();
-      setReceipt(null);
-      focusBarcode();
-    }
-    window.addEventListener('afterprint', finishPrinting);
-    const timer = window.setTimeout(() => window.print(), 50);
-    return () => {
-      window.removeEventListener('afterprint', finishPrinting);
-      window.clearTimeout(timer);
-    };
-  }, [receipt]);
+    window.addEventListener('afterprint', onAfterPrint);
+    return () => window.removeEventListener('afterprint', onAfterPrint);
+  }, []);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -1171,7 +1253,7 @@ export default function PosPage() {
                 return;
               }
               event.preventDefault();
-              confirmPay();
+              void saveInvoice();
             }}
             className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-slate-800"
           >
@@ -1306,8 +1388,8 @@ export default function PosPage() {
               <button type="button" onClick={() => setPayOpen(false)} className="min-h-[48px] touch-manipulation rounded-md bg-slate-200 px-6 text-sm font-semibold text-slate-800">
                 Cancel
               </button>
-              <button type="button" onClick={confirmPay} className="min-h-[48px] touch-manipulation rounded-md bg-emerald-600 px-8 text-sm font-bold text-white">
-                Ok
+              <button type="button" onClick={() => void saveInvoice()} disabled={savingInvoice} className="min-h-[48px] touch-manipulation rounded-md bg-emerald-600 px-8 text-sm font-bold text-white disabled:opacity-60">
+                {savingInvoice ? 'Saving...' : 'Ok'}
               </button>
             </div>
           </div>
