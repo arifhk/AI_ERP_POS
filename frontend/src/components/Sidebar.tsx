@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Building2,
+  Landmark,
   Contact,
   LayoutDashboard,
   MonitorSmartphone,
@@ -21,7 +22,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { getStoredRole, isAdminRole, isPlatformRole, isSystemOwner } from '../utils/auth';
+import { canManageCompany, getStoredRole, isAdminRole, isPlatformRole, isSystemOwner } from '../utils/auth';
 import { prefetchRoute } from '../utils/query';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
@@ -38,6 +39,7 @@ const NAV_LINKS = [
   { href: '/orders', label: 'Orders', key: 'orders', icon: Receipt },
   { href: '/expenses', label: 'Expenses', key: 'expenses', icon: Wallet },
   { href: '/customers', label: 'Customers', key: 'customers', icon: Contact },
+  { href: '/company-setup', label: 'Company Setup', key: 'company-setup', icon: Landmark },
   { href: '/settings', label: 'Settings', key: 'settings', icon: Settings },
 ] as const;
 
@@ -71,6 +73,9 @@ export function Sidebar({ active, className = '', collapsed = false, onToggle, o
     }
     if (link.key === 'system') {
       return isOwner;
+    }
+    if (link.key === 'company-setup') {
+      return canManageCompany(role);
     }
     return true;
   });

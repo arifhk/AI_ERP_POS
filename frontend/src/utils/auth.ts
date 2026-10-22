@@ -17,6 +17,11 @@ export function isAdminRole(role: string | null | undefined): boolean {
   return isPlatformRole(role) || value === 'admin' || value === 'tenant_admin';
 }
 
+export function canManageCompany(role: string | null | undefined): boolean {
+  const value = normalizeRole(role);
+  return value === 'tenant_admin' || value === 'admin' || value === 'super_admin' || isSystemOwner(role);
+}
+
 export function getStoredRole(): string | null {
   if (typeof window === 'undefined') {
     return null;
