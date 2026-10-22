@@ -9,7 +9,7 @@ import { ReprintModal } from '../../components/pos/ReprintModal';
 import { SearchCustomerModal, type PosCustomerRow } from '../../components/pos/SearchCustomerModal';
 import { AppShell } from '../../components/AppShell';
 import type { CatalogProduct } from '../../components/ProductEditor';
-import { API_BASE } from '../../utils/api';
+import { API_BASE, authHeaders } from '../../utils/api';
 import { fetchJson, useApi } from '../../utils/query';
 
 type CartLine = {
@@ -735,11 +735,12 @@ export default function PosPage() {
     try {
       const response = await fetch('/api/invoices', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       });
       if (!response.ok) {
-        throw new Error(`Invoice save failed (${response.status})`);
+        const failed = (await response.json().catch(() => null)) as { detail?: string; error?: string } | null;
+        throw new Error(failed?.detail || failed?.error || `Invoice save failed (${response.status})`);
       }
       const saved = (await response.json()) as { invoiceNo?: string };
       const invoiceNo = saved.invoiceNo || `INV${Date.now().toString().slice(-8)}`;
