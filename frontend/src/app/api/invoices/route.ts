@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 type InvoiceItem = {
   productId?: string | number | null;
   barcode?: string;

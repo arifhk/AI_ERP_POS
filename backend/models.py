@@ -321,6 +321,13 @@ class Order(SQLModel, table=True):
     branch_id: int = Field(foreign_key="branches.id", index=True)
     total_amount: float = Field(ge=0)
     customer_phone: Optional[str] = Field(default=None, max_length=50)
+    customer_name: str = Field(default="", max_length=255)
+    customer_address: str = Field(default="", max_length=500)
+    discount_amount: float = Field(default=0, ge=0)
+    vat_amount: float = Field(default=0, ge=0)
+    total_paid: float = Field(default=0, ge=0)
+    return_amount: float = Field(default=0, ge=0)
+    payment_methods: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     created_at: datetime = Field(default_factory=utcnow)
 
     tenant: Tenant = Relationship(back_populates="orders")
@@ -339,6 +346,8 @@ class OrderItem(SQLModel, table=True):
     variant_id: Optional[int] = Field(default=None, foreign_key="product_variants.id", index=True)
     quantity: int = Field(ge=1)
     price: float = Field(ge=0)
+    discount: float = Field(default=0, ge=0)
+    subtotal: float = Field(default=0, ge=0)
 
     order: Order = Relationship(back_populates="items")
     product: Product = Relationship(back_populates="order_items")

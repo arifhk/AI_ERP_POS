@@ -33,7 +33,7 @@ from models import (
     User,
     parse_iso_datetime,
 )
-from routers import branches, orders, products, recovery, settings, system_admin, tenants, users
+from routers import branches, invoices, orders, products, recovery, settings, system_admin, tenants, users
 from routers.catalog import approvals_router, masters_router
 from routers.users import UserRead, _validate_scope
 
@@ -76,6 +76,7 @@ app.include_router(settings.router, prefix="/settings", tags=["Settings"])
 app.include_router(masters_router, prefix="/masters", tags=["Masters"])
 app.include_router(approvals_router, prefix="/approvals", tags=["Approvals"])
 app.include_router(orders.router, prefix="/orders", tags=["Orders"])  # POS checkout
+app.include_router(invoices.router, prefix="/invoices", tags=["Invoices"])
 app.include_router(recovery.router, prefix="/auth", tags=["Auth"])
 app.include_router(system_admin.router, prefix="/system", tags=["System Owner"])
 

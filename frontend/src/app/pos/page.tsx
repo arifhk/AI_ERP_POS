@@ -191,6 +191,17 @@ function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+async function invoiceError(response: Response) {
+  const failed = (await response.json().catch(() => null)) as { detail?: unknown; error?: unknown } | null;
+  if (typeof failed?.detail === 'string' && failed.detail && failed.detail !== 'Not Found') {
+    return failed.detail;
+  }
+  if (typeof failed?.error === 'string' && failed.error) {
+    return failed.error;
+  }
+  return '';
+}
+
 function cartProductId(id: string) {
   const raw = /^(?:p|v)-(.+)$/.exec(id)?.[1] ?? id;
   const numeric = Number(raw);
@@ -733,14 +744,19 @@ export default function PosPage() {
     setSavingInvoice(true);
     setPayError(null);
     try {
-      const response = await fetch('/api/invoices', {
+      const requestInit: RequestInit = {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
-      });
+      };
+      let response = await fetch('/api/invoices', requestInit);
+      let failure = response.ok ? '' : await invoiceError(response);
+      if (response.status === 404 && !failure) {
+        response = await fetch(`${API_BASE}/invoices/`, requestInit);
+        failure = response.ok ? '' : await invoiceError(response);
+      }
       if (!response.ok) {
-        const failed = (await response.json().catch(() => null)) as { detail?: string; error?: string } | null;
-        throw new Error(failed?.detail || failed?.error || `Invoice save failed (${response.status})`);
+        throw new Error(failure || `Invoice save failed (${response.status})`);
       }
       const saved = (await response.json()) as { invoiceNo?: string };
       const invoiceNo = saved.invoiceNo || `INV${Date.now().toString().slice(-8)}`;

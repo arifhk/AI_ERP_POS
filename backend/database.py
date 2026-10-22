@@ -97,6 +97,10 @@ def _align_order_variant_column(connection) -> None:
     columns = {column["name"] for column in inspector.get_columns("order_items")}
     if "variant_id" not in columns:
         connection.execute(text("ALTER TABLE order_items ADD COLUMN variant_id INTEGER"))
+    columns = {column["name"] for column in inspector.get_columns("order_items")}
+    for name in ("discount", "subtotal"):
+        if name not in columns:
+            connection.execute(text(f"ALTER TABLE order_items ADD COLUMN {name} FLOAT DEFAULT 0"))
 
 
 def _align_users_schema(connection) -> None:
@@ -120,6 +124,20 @@ def _align_orders_schema(connection) -> None:
     columns = {column["name"] for column in inspector.get_columns("orders")}
     if "customer_phone" not in columns:
         connection.execute(text("ALTER TABLE orders ADD COLUMN customer_phone VARCHAR(50)"))
+    columns = {column["name"] for column in inspector.get_columns("orders")}
+    payment_type = "JSON DEFAULT '[]'::json" if connection.dialect.name == "postgresql" else "TEXT DEFAULT '[]'"
+    additions = {
+        "customer_name": "VARCHAR(255) DEFAULT ''",
+        "customer_address": "VARCHAR(500) DEFAULT ''",
+        "discount_amount": "FLOAT DEFAULT 0",
+        "vat_amount": "FLOAT DEFAULT 0",
+        "total_paid": "FLOAT DEFAULT 0",
+        "return_amount": "FLOAT DEFAULT 0",
+        "payment_methods": payment_type,
+    }
+    for name, column_type in additions.items():
+        if name not in columns:
+            connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {column_type}"))
 
 
 def _align_visibility_flags(connection) -> None:
