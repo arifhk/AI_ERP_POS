@@ -92,6 +92,26 @@ function membershipValue(type: string) {
   return /vip/i.test(type) ? 'VIP' : 'Regular';
 }
 
+function ageFromDob(value: string) {
+  if (!value) {
+    return '';
+  }
+  const dob = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(dob.getTime())) {
+    return '';
+  }
+  const today = new Date();
+  let years = today.getFullYear() - dob.getFullYear();
+  const month = today.getMonth() - dob.getMonth();
+  if (month < 0 || (month === 0 && today.getDate() < dob.getDate())) {
+    years -= 1;
+  }
+  if (years < 0 || years > 130) {
+    return '';
+  }
+  return String(years);
+}
+
 const DEFAULT_PAYMENT_METHODS = ['Cash', 'BKASH', 'NAGAD', 'Card'];
 
 function isCardMethod(method: string) {
@@ -279,6 +299,10 @@ export default function PosPage() {
   const [loyaltyPoints, setLoyaltyPoints] = useState(0);
   const [customerEmail, setCustomerEmail] = useState('');
   const [membership, setMembership] = useState('Regular');
+  const [isExistingCustomer, setIsExistingCustomer] = useState(false);
+  const [gender, setGender] = useState('Select');
+  const [dob, setDob] = useState('');
+  const [age, setAge] = useState('');
   const [discountPercent, setDiscountPercent] = useState('0');
   const [flatDiscountAmount, setFlatDiscountAmount] = useState('0.00');
   const [returnAmount, setReturnAmount] = useState(0);
@@ -308,6 +332,13 @@ export default function PosPage() {
   useEffect(() => {
     setHeldInvoices(readHeldInvoices());
   }, []);
+
+  useEffect(() => {
+    const years = ageFromDob(dob);
+    if (years) {
+      setAge(years);
+    }
+  }, [dob]);
 
   useEffect(() => {
     if (!firstPage) {
@@ -448,6 +479,10 @@ export default function PosPage() {
       setLoyaltyPoints(match.loyaltyPoints || 0);
       setCustomerEmail(match.email || '');
       setMembership(membershipValue(match.type));
+      setGender(match.gender || 'Select');
+      setDob(match.dob || '');
+      setAge(match.age || ageFromDob(match.dob || ''));
+      setIsExistingCustomer(true);
       focusBarcode();
       return;
     }
@@ -463,6 +498,9 @@ export default function PosPage() {
       email: '',
       previousDue: 0,
       loyaltyPoints: 0,
+      gender: 'Select',
+      dob: '',
+      age: '',
     };
     setDirectory((current) => [created, ...current.filter((row) => phoneDigits(row.phone) !== needle)]);
     setCustomerId(id);
@@ -473,10 +511,14 @@ export default function PosPage() {
     setLoyaltyPoints(0);
     setCustomerEmail('');
     setMembership('Regular');
+    setGender('Select');
+    setDob('');
+    setAge('');
+    setIsExistingCustomer(false);
     window.setTimeout(() => customerNameRef.current?.focus(), 0);
   }
 
-  function rememberCustomer(patch: Partial<Pick<PosCustomerRow, 'firstName' | 'address' | 'email' | 'type'>>) {
+  function rememberCustomer(patch: Partial<Pick<PosCustomerRow, 'firstName' | 'address' | 'email' | 'type' | 'gender' | 'dob' | 'age'>>) {
     if (!customerCode) {
       return;
     }
@@ -531,6 +573,10 @@ export default function PosPage() {
     setLoyaltyPoints(0);
     setCustomerEmail('');
     setMembership('Regular');
+    setGender('Select');
+    setDob('');
+    setAge('');
+    setIsExistingCustomer(false);
     setDiscountPercent('0');
     setFlatDiscountAmount('0.00');
     setReturnAmount(0);
@@ -582,6 +628,10 @@ export default function PosPage() {
     setLoyaltyPoints(0);
     setCustomerEmail('');
     setMembership('Regular');
+    setGender('Select');
+    setDob('');
+    setAge('');
+    setIsExistingCustomer(false);
     setDiscountPercent('0');
     setFlatDiscountAmount('0.00');
     setReturnAmount(0);
@@ -709,6 +759,10 @@ export default function PosPage() {
     setLoyaltyPoints(0);
     setCustomerEmail('');
     setMembership('Regular');
+    setGender('Select');
+    setDob('');
+    setAge('');
+    setIsExistingCustomer(false);
     setDiscountPercent('0');
     setFlatDiscountAmount('0.00');
     setReturnAmount(0);
@@ -836,7 +890,7 @@ export default function PosPage() {
     }
   }
 
-  function applyCustomer(row: PosCustomerRow) {
+  function applyCustomer(row: PosCustomerRow, existing = true) {
     setCustomerCode(row.id);
     setCustomerId(row.id);
     setCustomerName(row.firstName);
@@ -846,6 +900,10 @@ export default function PosPage() {
     setLoyaltyPoints(row.loyaltyPoints || 0);
     setCustomerEmail(row.email || '');
     setMembership(membershipValue(row.type));
+    setGender(row.gender || 'Select');
+    setDob(row.dob || '');
+    setAge(row.age || ageFromDob(row.dob || ''));
+    setIsExistingCustomer(existing);
     resolvedPhoneRef.current = phoneDigits(row.phone);
     setIsSearchCustomerOpen(false);
     setIsAddCustomerOpen(false);
@@ -865,10 +923,13 @@ export default function PosPage() {
       email: form.email.trim(),
       previousDue: 0,
       loyaltyPoints: 0,
+      gender: form.gender || 'Select',
+      dob: form.dateOfBirth || '',
+      age: ageFromDob(form.dateOfBirth || ''),
     };
     setDirectory((current) => [row, ...current.filter((item) => item.id !== row.id)]);
     const name = [form.firstName, form.middleName, form.lastName].map((part) => part.trim()).filter(Boolean).join(' ');
-    applyCustomer({ ...row, firstName: name || row.firstName });
+    applyCustomer({ ...row, firstName: name || row.firstName }, false);
   }
 
   function exchangeItem() {
@@ -899,6 +960,10 @@ export default function PosPage() {
     setLoyaltyPoints(saved?.loyaltyPoints || 0);
     setCustomerEmail(saved?.email || '');
     setMembership(membershipValue(saved?.type || 'Regular'));
+    setGender(saved?.gender || 'Select');
+    setDob(saved?.dob || '');
+    setAge(saved?.age || ageFromDob(saved?.dob || ''));
+    setIsExistingCustomer(Boolean(saved));
     resolvedPhoneRef.current = phoneDigits(customer.phone);
     setDiscountPercent(invoice.orderDiscountPercent || '0');
     setFlatDiscountAmount(invoice.orderDiscountAmount || '0.00');
@@ -973,6 +1038,10 @@ export default function PosPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  const customerDetailClass = isExistingCustomer
+    ? 'mt-1 min-h-[44px] w-full cursor-not-allowed rounded-md border border-transparent bg-gray-100 px-3 text-sm font-semibold text-gray-500 outline-none disabled:cursor-not-allowed disabled:border-transparent disabled:bg-gray-100 disabled:text-gray-500'
+    : 'mt-1 min-h-[44px] w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30';
 
   return (
     <>
@@ -1051,6 +1120,10 @@ export default function PosPage() {
                         setLoyaltyPoints(0);
                         setCustomerEmail('');
                         setMembership('Regular');
+                        setGender('Select');
+                        setDob('');
+                        setAge('');
+                        setIsExistingCustomer(false);
                       }}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter') {
@@ -1073,7 +1146,10 @@ export default function PosPage() {
                       type="button"
                       aria-label="Add Customer"
                       data-customer-action="add"
-                      onClick={() => setIsAddCustomerOpen(true)}
+                      onClick={() => {
+                        setIsExistingCustomer(false);
+                        setIsAddCustomerOpen(true);
+                      }}
                       className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md bg-emerald-600 text-xl font-bold text-white"
                     >
                       +
@@ -1106,6 +1182,8 @@ export default function PosPage() {
                   <input
                     id="pos-customer-name"
                     ref={customerNameRef}
+                    readOnly={isExistingCustomer}
+                    tabIndex={isExistingCustomer ? -1 : undefined}
                     value={customerName}
                     onChange={(event) => {
                       const name = event.target.value;
@@ -1119,19 +1197,21 @@ export default function PosPage() {
                       }
                     }}
                     placeholder="Walk-in"
-                    className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                    className={customerDetailClass}
                   />
                 </label>
                 <label className="text-xs font-semibold text-slate-500">
                   Address
                   <input
+                    readOnly={isExistingCustomer}
+                    tabIndex={isExistingCustomer ? -1 : undefined}
                     value={customerAddress}
                     onChange={(event) => {
                       const address = event.target.value;
                       setCustomerAddress(address);
                       rememberCustomer({ address });
                     }}
-                    className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                    className={customerDetailClass}
                   />
                 </label>
               </div>
@@ -1158,6 +1238,8 @@ export default function PosPage() {
                   Email
                   <input
                     type="email"
+                    readOnly={isExistingCustomer}
+                    tabIndex={isExistingCustomer ? -1 : undefined}
                     value={customerEmail}
                     onChange={(event) => {
                       const email = event.target.value;
@@ -1165,23 +1247,81 @@ export default function PosPage() {
                       rememberCustomer({ email });
                     }}
                     placeholder="name@email.com"
-                    className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                    className={customerDetailClass}
                   />
                 </label>
                 <label className="text-xs font-semibold text-slate-500">
                   Membership
                   <select
                     value={membership}
+                    disabled={isExistingCustomer}
+                    aria-readonly={isExistingCustomer}
                     onChange={(event) => {
                       const type = event.target.value;
                       setMembership(type);
                       rememberCustomer({ type });
                     }}
-                    className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                    className={customerDetailClass}
                   >
                     <option value="Regular">Regular</option>
                     <option value="VIP">VIP</option>
                   </select>
+                </label>
+              </div>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+                <label className="text-xs font-semibold text-slate-500">
+                  Gender
+                  <select
+                    value={gender}
+                    disabled={isExistingCustomer}
+                    aria-readonly={isExistingCustomer}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setGender(value);
+                      rememberCustomer({ gender: value });
+                    }}
+                    className={customerDetailClass}
+                  >
+                    <option value="Select">Select</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-500">
+                  Date of Birth
+                  <input
+                    type="date"
+                    readOnly={isExistingCustomer}
+                    tabIndex={isExistingCustomer ? -1 : undefined}
+                    value={dob}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setDob(value);
+                      const years = ageFromDob(value);
+                      if (years) {
+                        setAge(years);
+                      }
+                      rememberCustomer({ dob: value, ...(years ? { age: years } : {}) });
+                    }}
+                    className={customerDetailClass}
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-500">
+                  Age
+                  <input
+                    inputMode="numeric"
+                    readOnly={isExistingCustomer}
+                    tabIndex={isExistingCustomer ? -1 : undefined}
+                    value={age}
+                    onChange={(event) => {
+                      const value = event.target.value.replace(/[^\d]/g, '');
+                      setAge(value);
+                      rememberCustomer({ age: value });
+                    }}
+                    placeholder="Years"
+                    className={customerDetailClass}
+                  />
                 </label>
               </div>
               </div>
