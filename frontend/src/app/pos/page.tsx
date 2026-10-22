@@ -61,6 +61,7 @@ type SaleReceipt = {
   payments: { method: string; amount: number; bankName?: string; accountNumber?: string }[];
   paid: number;
   change: number;
+  previousPoints: number;
 };
 
 const CATALOG_PAGE = `${API_BASE}/products/table?page=1&page_size=100&status=active`;
@@ -225,53 +226,174 @@ function paymentLabel(payment: SaleReceipt['payments'][number]) {
   return payment.bankName ? `${payment.method} - ${payment.bankName}` : payment.method;
 }
 
-function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
-  const [date, time = ''] = sale.issuedAt.split(',').map((part) => part.trim());
-  const due = Math.max(0, Math.round((sale.net - sale.paid) * 100) / 100);
+const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+function integerWords(value: number): string {
+  if (value < 20) {
+    return ONES[value] || 'Zero';
+  }
+  if (value < 100) {
+    return `${TENS[Math.floor(value / 10)]}${value % 10 ? ` ${ONES[value % 10]}` : ''}`;
+  }
+  if (value < 1000) {
+    return `${ONES[Math.floor(value / 100)]} Hundred${value % 100 ? ` ${integerWords(value % 100)}` : ''}`;
+  }
+  if (value < 100000) {
+    return `${integerWords(Math.floor(value / 1000))} Thousand${value % 1000 ? ` ${integerWords(value % 1000)}` : ''}`;
+  }
+  if (value < 10000000) {
+    return `${integerWords(Math.floor(value / 100000))} Lakh${value % 100000 ? ` ${integerWords(value % 100000)}` : ''}`;
+  }
+  return `${integerWords(Math.floor(value / 10000000))} Crore${value % 10000000 ? ` ${integerWords(value % 10000000)}` : ''}`;
+}
+
+function amountInWords(amount: number) {
+  const taka = Math.floor(Math.abs(amount));
+  const paisa = Math.round((Math.abs(amount) - taka) * 100) % 100;
+  const takaWords = taka === 0 ? 'Zero' : integerWords(taka);
+  const paisaWords = paisa > 0 ? ` and ${integerWords(paisa)} Paisa` : '';
+  return `${takaWords} Taka${paisaWords} Only`;
+}
+
+function ReceiptBarcode({ value }: { value: string }) {
+  const bits = value.split('').flatMap((char) => char.charCodeAt(0).toString(2).padStart(7, '0').split(''));
   return (
-    <article className="mx-auto w-[80mm] bg-white text-center font-mono text-[12px] leading-tight text-black">
-      <header>
-        <p className="text-sm font-bold">Bashundhara City</p>
-        <p>Bashundhara, Dhaka</p>
-        <p className="mt-1 font-bold">Invoice {sale.invoiceNo}</p>
-        <p>Date {date}</p>
-        {time ? <p>Time {time}</p> : null}
+    <svg viewBox={`0 0 ${bits.length + 8} 42`} className="mx-auto mt-1 h-10 w-[70mm]" role="img" aria-label={`Barcode ${value}`}>
+      <rect width="100%" height="100%" fill="white" />
+      {bits.map((bit, index) => (bit === '1' ? <rect key={index} x={index + 4} y="0" width="1" height="32" fill="black" /> : null))}
+      <text x={(bits.length + 8) / 2} y="40" textAnchor="middle" fontSize="8" fill="black">
+        {value}
+      </text>
+    </svg>
+  );
+}
+
+function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
+  const printDate = new Date().toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const itemQty = sale.lines.reduce((sum, line) => sum + line.qty, 0);
+  const itemAmount = sale.lines.reduce((sum, line) => sum + lineTotal(line), 0);
+  const previousPoint = sale.previousPoints || 0;
+  const redeemPoint = 0;
+  const earnedPoint = Math.floor(Math.max(0, sale.net) / 100);
+  const currentPoint = previousPoint - redeemPoint + earnedPoint;
+  const payments = sale.payments.filter((payment) => payment.amount > 0);
+  return (
+    <article className="mx-auto w-[80mm] bg-white px-1 py-1 font-mono text-[10px] leading-tight text-black">
+      <header className="text-center">
+        <p className="bg-black py-1 text-sm font-bold tracking-wide text-white [print-color-adjust:exact]">Plus Point</p>
+        <p className="mt-1 text-xs">Bashundhara City (2)</p>
+        <p>Shop No= 48,49. Level -3, Block - C, Bashundhara City, Dhaka , Dhaka-0</p>
+        <p>01958387964</p>
       </header>
-      <table className="mt-2 w-full border-collapse border-t border-dashed border-black text-left">
+
+      <div className="mt-1 border border-black py-0.5 text-center text-xs font-bold">MUSHAK: 6.3</div>
+
+      <div className="mt-1 grid grid-cols-2 gap-x-2">
+        <p>Invoice No: {sale.invoiceNo}</p>
+        <p>Invoice Date: {sale.issuedAt}</p>
+        <p>Print Date: {printDate}</p>
+        <div>
+          <p>VAT Reg.: —</p>
+          <p className="font-bold">DUPLICATE-</p>
+        </div>
+      </div>
+
+      <div className="mt-1 grid grid-cols-2 gap-x-2 border-t border-black pt-1">
+        <p>Name: {sale.customer.name || 'Walk-in'}</p>
+        <p>Address: {sale.customer.address || '—'}</p>
+        <p>Mobile: {sale.customer.phone || '—'}</p>
+        <p>Served by: samad</p>
+      </div>
+
+      <table className="mt-1 w-full border-collapse text-left">
         <thead>
-          <tr className="border-b border-black">
-            <th className="py-1 pr-1 font-semibold">Item</th>
-            <th className="py-1 text-right font-semibold">Qty</th>
-            <th className="py-1 pl-1 text-right font-semibold">Price</th>
-            <th className="py-1 pl-1 text-right font-semibold">Total</th>
+          <tr className="border-y border-black">
+            <th className="py-0.5 pr-0.5 font-semibold">SL</th>
+            <th className="py-0.5 pr-0.5 font-semibold">Description</th>
+            <th className="py-0.5 text-right font-semibold">Sqty</th>
+            <th className="py-0.5 text-right font-semibold">MRP</th>
+            <th className="py-0.5 text-right font-semibold">D Amt</th>
+            <th className="py-0.5 text-right font-semibold">Amount</th>
           </tr>
         </thead>
         <tbody>
-          {sale.lines.map((line) => (
+          {sale.lines.map((line, index) => (
             <tr key={line.id} className="align-top">
-              <td className="py-0.5 pr-1">{line.name}</td>
+              <td className="py-0.5 pr-0.5 tabular-nums">{index + 1}</td>
+              <td className="py-0.5 pr-0.5">{line.name}</td>
               <td className="py-0.5 text-right tabular-nums">{line.qty}</td>
-              <td className="py-0.5 pl-1 text-right tabular-nums">{money(line.price)}</td>
-              <td className="py-0.5 pl-1 text-right tabular-nums">{money(lineTotal(line))}</td>
+              <td className="py-0.5 text-right tabular-nums">{money(line.price)}</td>
+              <td className="py-0.5 text-right tabular-nums">{money(lineDiscount(line))}</td>
+              <td className="py-0.5 text-right tabular-nums">{money(lineTotal(line))}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <footer className="mt-2 space-y-0.5 border-t border-dashed border-black pt-1 text-left">
-        <div className="flex justify-between"><span>Subtotal</span><span className="tabular-nums">{money(sale.total)}</span></div>
+      <div className="grid grid-cols-[1.4rem_1fr_2rem_1fr] gap-1 border-y border-black bg-gray-200 px-0.5 py-0.5 font-bold [print-color-adjust:exact]">
+        <span />
+        <span>Sub Total:</span>
+        <span className="text-right tabular-nums">{itemQty}</span>
+        <span className="text-right tabular-nums">{money(itemAmount)}</span>
+      </div>
+
+      <div className="ml-auto mt-1 w-[48mm] space-y-0.5">
         <div className="flex justify-between"><span>Discount</span><span className="tabular-nums">{money(sale.discount)}</span></div>
         <div className="flex justify-between"><span>VAT</span><span className="tabular-nums">{money(sale.vat)}</span></div>
-        <div className="flex justify-between font-bold"><span>Net Total</span><span className="tabular-nums">{money(sale.net)}</span></div>
+        <div className="flex justify-between font-bold"><span>Net Amount</span><span className="tabular-nums">{money(sale.net)}</span></div>
         <div className="flex justify-between"><span>Paid Amount</span><span className="tabular-nums">{money(sale.paid)}</span></div>
         <div className="flex justify-between"><span>Change Amount</span><span className="tabular-nums">{money(sale.change)}</span></div>
-        <div className="flex justify-between"><span>Due</span><span className="tabular-nums">{money(due)}</span></div>
-        {sale.payments.map((payment) => (
-          <div key={payment.method} className="flex justify-between gap-2">
-            <span>{paymentLabel(payment)}</span>
-            <span className="shrink-0 tabular-nums">{money(payment.amount)}</span>
-          </div>
-        ))}
-        <p className="pt-2 text-center">Thank you</p>
+      </div>
+      <p className="mt-1">Inword: {amountInWords(sale.net)}</p>
+
+      <table className="mt-1 w-full border-collapse border border-black">
+        <thead>
+          <tr className="border-b border-black">
+            <th className="px-1 py-0.5 text-left font-semibold">DESCRIPTION</th>
+            <th className="px-1 py-0.5 text-right font-semibold">AMOUNT</th>
+          </tr>
+        </thead>
+        <tbody>
+          {payments.length > 0 ? (
+            payments.map((payment) => (
+              <tr key={`${payment.method}-${payment.bankName ?? ''}`}>
+                <td className="border-t border-black px-1 py-0.5">{paymentLabel(payment)}</td>
+                <td className="border-t border-black px-1 py-0.5 text-right tabular-nums">{money(payment.amount)}</td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td className="px-1 py-0.5">CREDIT SALE</td>
+              <td className="px-1 py-0.5 text-right tabular-nums">{money(sale.net)}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      <div className="mt-1 border border-black p-1">
+        <div className="flex justify-between"><span>Previous Point</span><span className="tabular-nums">{previousPoint}</span></div>
+        <div className="flex justify-between"><span>Redeem Point</span><span className="tabular-nums">{redeemPoint}</span></div>
+        <div className="flex justify-between"><span>Earned Point</span><span className="tabular-nums">{earnedPoint}</span></div>
+        <div className="flex justify-between font-bold"><span>Curent Point</span><span className="tabular-nums">{currentPoint}</span></div>
+      </div>
+
+      <ReceiptBarcode value={sale.invoiceNo} />
+
+      <footer className="mt-1 text-center">
+        <p>01958387964 · www.pluspoint.com.bd</p>
+        <ul className="mt-1 list-disc pl-4 text-left">
+          <li>Exchanges within 10 days.</li>
+          <li>No cash refunds.</li>
+          <li>Original tag is required.</li>
+          <li>No exchange on accessories or discounted items.</li>
+        </ul>
+        <p className="mt-1">System By: Mediasoft Data Systems Ltd. T: 55014045</p>
       </footer>
     </article>
   );
@@ -876,6 +998,7 @@ export default function PosPage() {
           payments: methods,
           paid,
           change,
+          previousPoints: loyaltyPoints,
         });
       });
       window.setTimeout(() => window.print(), 50);
