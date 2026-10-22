@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { PosCameraScanner } from '../../components/PosCameraScanner';
 import { AddCustomerModal, type NewCustomerForm } from '../../components/pos/AddCustomerModal';
 import { ReprintModal } from '../../components/pos/ReprintModal';
@@ -185,101 +186,58 @@ function lineTotal(line: CartLine) {
   return lineGross(line) - lineDiscount(line) + lineVat(line);
 }
 
+function paymentLabel(payment: SaleReceipt['payments'][number]) {
+  return payment.bankName ? `${payment.method} - ${payment.bankName}` : payment.method;
+}
+
 function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
-  const customerBits = [sale.customer.name, sale.customer.phone, sale.customer.address].filter(Boolean);
+  const [date, time = ''] = sale.issuedAt.split(',').map((part) => part.trim());
+  const due = Math.max(0, Math.round((sale.net - sale.paid) * 100) / 100);
   return (
-    <>
-      <style>{`
-        @media screen {
-          #pos-receipt { position: absolute; width: 0; height: 0; overflow: hidden; }
-        }
-        @media print {
-          body * { visibility: hidden; }
-          #pos-receipt, #pos-receipt * { visibility: visible; }
-          #pos-receipt {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 80mm;
-            height: auto;
-            overflow: visible;
-            background: #fff;
-            color: #000;
-          }
-          @page { size: 80mm auto; margin: 4mm; }
-        }
-      `}</style>
-      <article id="pos-receipt" className="bg-white font-mono text-[11px] leading-snug text-black">
-        <header className="border-b border-dashed border-black pb-2 text-center">
-          <p className="text-sm font-bold">Bashundhara City</p>
-          <p>Terminal 01</p>
-          <p>{sale.issuedAt}</p>
-          <p className="font-bold">Invoice {sale.invoiceNo}</p>
-        </header>
-        {customerBits.length > 0 ? (
-          <p className="border-b border-dashed border-black py-2">
-            {sale.customer.code ? `Customer ${sale.customer.code}` : 'Customer'}
-            <br />
-            {customerBits.join(' · ')}
-          </p>
-        ) : (
-          <p className="border-b border-dashed border-black py-2">Walk-in</p>
-        )}
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-black text-left">
-              <th className="py-1 font-semibold">Item</th>
-              <th className="py-1 text-right font-semibold">Qty</th>
-              <th className="py-1 text-right font-semibold">Total</th>
+    <article className="mx-auto w-[80mm] bg-white text-center font-mono text-[12px] leading-tight text-black">
+      <header>
+        <p className="text-sm font-bold">Bashundhara City</p>
+        <p>Bashundhara, Dhaka</p>
+        <p className="mt-1 font-bold">Invoice {sale.invoiceNo}</p>
+        <p>Date {date}</p>
+        {time ? <p>Time {time}</p> : null}
+      </header>
+      <table className="mt-2 w-full border-collapse border-t border-dashed border-black text-left">
+        <thead>
+          <tr className="border-b border-black">
+            <th className="py-1 pr-1 font-semibold">Item</th>
+            <th className="py-1 text-right font-semibold">Qty</th>
+            <th className="py-1 pl-1 text-right font-semibold">Price</th>
+            <th className="py-1 pl-1 text-right font-semibold">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sale.lines.map((line) => (
+            <tr key={line.id} className="align-top">
+              <td className="py-0.5 pr-1">{line.name}</td>
+              <td className="py-0.5 text-right tabular-nums">{line.qty}</td>
+              <td className="py-0.5 pl-1 text-right tabular-nums">{money(line.price)}</td>
+              <td className="py-0.5 pl-1 text-right tabular-nums">{money(lineTotal(line))}</td>
             </tr>
-          </thead>
-          <tbody>
-            {sale.lines.map((line, index) => (
-              <tr key={line.id} className="align-top">
-                <td className="py-1 pr-2">
-                  {index + 1}. {line.name}
-                  <br />
-                  <span>
-                    {line.barcode} · {money(line.price)}
-                    {line.vat ? ` · VAT ${line.vat}%` : ''}
-                    {line.disc ? ` · Disc ${line.disc}%` : ''}
-                  </span>
-                </td>
-                <td className="py-1 text-right tabular-nums">{line.qty}</td>
-                <td className="py-1 text-right tabular-nums">{money(lineTotal(line))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <dl className="mt-1 space-y-0.5 border-t border-dashed border-black pt-2">
-          <div className="flex justify-between"><dt>Total Line</dt><dd className="tabular-nums">{sale.lines.length}</dd></div>
-          <div className="flex justify-between"><dt>Total Qty</dt><dd className="tabular-nums">{sale.qty}</dd></div>
-          <div className="flex justify-between"><dt>Total</dt><dd className="tabular-nums">{money(sale.total)}</dd></div>
-          <div className="flex justify-between"><dt>SD Amount</dt><dd className="tabular-nums">{money(sale.sd)}</dd></div>
-          <div className="flex justify-between"><dt>VAT</dt><dd className="tabular-nums">{money(sale.vat)}</dd></div>
-          <div className="flex justify-between"><dt>Discount (%)</dt><dd className="tabular-nums">{sale.discountPercent}</dd></div>
-          <div className="flex justify-between"><dt>Discount</dt><dd className="tabular-nums">{money(sale.discount)}</dd></div>
-          <div className="flex justify-between"><dt>Return Amount</dt><dd className="tabular-nums">{money(sale.returnAmount)}</dd></div>
-          <div className="flex justify-between"><dt>Sub Total</dt><dd className="tabular-nums">{money(sale.subTotal)}</dd></div>
-          <div className="flex justify-between text-sm font-bold"><dt>NET AMOUNT</dt><dd className="tabular-nums">{money(sale.net)}</dd></div>
-        </dl>
-        <div className="mt-2 border-t border-dashed border-black pt-2">
-          {sale.payments.map((payment) => (
-            <div key={payment.method} className="flex justify-between gap-2">
-              <span>
-                {payment.method}
-                {payment.bankName ? ` · ${payment.bankName}` : ''}
-                {payment.accountNumber ? ` · ${payment.accountNumber}` : ''}
-              </span>
-              <span className="shrink-0 tabular-nums">{money(payment.amount)}</span>
-            </div>
           ))}
-          <div className="flex justify-between"><span>Total Paid</span><span className="tabular-nums">{money(sale.paid)}</span></div>
-          <div className="flex justify-between font-bold"><span>Change</span><span className="tabular-nums">{money(sale.change)}</span></div>
-        </div>
-        <p className="mt-3 text-center">Thank you</p>
-      </article>
-    </>
+        </tbody>
+      </table>
+      <footer className="mt-2 space-y-0.5 border-t border-dashed border-black pt-1 text-left">
+        <div className="flex justify-between"><span>Subtotal</span><span className="tabular-nums">{money(sale.total)}</span></div>
+        <div className="flex justify-between"><span>Discount</span><span className="tabular-nums">{money(sale.discount)}</span></div>
+        <div className="flex justify-between"><span>VAT</span><span className="tabular-nums">{money(sale.vat)}</span></div>
+        <div className="flex justify-between font-bold"><span>Net Total</span><span className="tabular-nums">{money(sale.net)}</span></div>
+        <div className="flex justify-between"><span>Paid</span><span className="tabular-nums">{money(sale.paid)}</span></div>
+        <div className="flex justify-between"><span>Due</span><span className="tabular-nums">{money(due)}</span></div>
+        {sale.payments.map((payment) => (
+          <div key={payment.method} className="flex justify-between gap-2">
+            <span>{paymentLabel(payment)}</span>
+            <span className="shrink-0 tabular-nums">{money(payment.amount)}</span>
+          </div>
+        ))}
+        <p className="pt-2 text-center">Thank you</p>
+      </footer>
+    </article>
   );
 }
 
@@ -852,6 +810,8 @@ export default function PosPage() {
   });
 
   return (
+    <>
+    <div className="no-print">
     <AppShell active="pos" mainClassName="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#eef1f4] p-0 dark:bg-slate-900">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
@@ -1353,7 +1313,16 @@ export default function PosPage() {
           </div>
         </div>
       ) : null}
-      {receipt ? <ThermalReceipt sale={receipt} /> : null}
     </AppShell>
+    </div>
+    {receipt
+      ? createPortal(
+          <div className="print-only">
+            <ThermalReceipt sale={receipt} />
+          </div>,
+          document.body,
+        )
+      : null}
+    </>
   );
 }

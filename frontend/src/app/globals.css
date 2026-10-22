@@ -84,9 +84,28 @@ body {
   background-color: rgb(51 65 85 / 0.5);
 }
 
+.print-only {
+  display: none;
+}
+
 @media print {
   @page {
     margin: 0;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+    width: 80mm;
+    margin: 0;
+    padding: 0;
+    font-family: monospace;
+    font-size: 12px;
+    color: black;
+    background: #fff;
   }
 
   html,
@@ -102,7 +121,7 @@ body {
     print-color-adjust: exact;
   }
 
-  body > *:not(#thermal-receipt-host):not(#barcode-label-host):not(#laser-invoice-host) {
+  body > *:not(#thermal-receipt-host):not(#barcode-label-host):not(#laser-invoice-host):not(.print-only) {
     display: none !important;
   }
 
