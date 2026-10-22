@@ -1256,7 +1256,7 @@ export default function PosPage() {
               ).map(([label, value]) => (
                 <label key={label} className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
                   <span>{label}</span>
-                  <input readOnly tabIndex={-1} value={value} className="h-7 w-28 rounded border border-slate-300 bg-slate-100 px-2 text-right text-xs tabular-nums text-slate-800 outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100" />
+                  <input readOnly tabIndex={-1} value={value} className="h-7 w-28 cursor-not-allowed rounded border border-transparent bg-gray-100 px-2 text-right text-xs font-semibold tabular-nums text-gray-500 outline-none" />
                 </label>
               ))}
               <label className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
@@ -1265,7 +1265,7 @@ export default function PosPage() {
                   value={orderDiscountPercent}
                   onChange={(event) => onDiscountPercentChange(event.target.value)}
                   inputMode="decimal"
-                  className="h-7 w-28 rounded border border-slate-400 bg-slate-100 px-2 text-right text-xs tabular-nums text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-sky-500/30 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100 dark:focus:bg-slate-900"
+                  className="h-7 w-28 rounded border border-blue-400 bg-white px-2 text-right text-xs font-semibold tabular-nums text-black outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </label>
               <label className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
@@ -1274,25 +1274,22 @@ export default function PosPage() {
                   value={orderDiscountAmount}
                   onChange={(event) => onDiscountAmountChange(event.target.value)}
                   inputMode="decimal"
-                  className="h-7 w-28 rounded border border-slate-400 bg-slate-100 px-2 text-right text-xs tabular-nums text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-sky-500/30 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100 dark:focus:bg-slate-900"
+                  className="h-7 w-28 rounded border border-blue-400 bg-white px-2 text-right text-xs font-semibold tabular-nums text-black outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </label>
-              {(
-                [
-                  ['Return Amount', money(totals.returnAmount)],
-                  ['Sub Total', money(totals.subTotal)],
-                ] as const
-              ).map(([label, value]) => (
-                <label key={label} className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
-                  <span>{label}</span>
-                  <input readOnly tabIndex={-1} value={value} className="h-7 w-28 rounded border border-slate-300 bg-slate-100 px-2 text-right text-xs tabular-nums text-slate-800 outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100" />
-                </label>
-              ))}
+              <label className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                <span>Return Amount</span>
+                <input readOnly tabIndex={-1} value={money(totals.returnAmount)} className="h-7 w-28 cursor-not-allowed rounded border border-transparent bg-gray-100 px-2 text-right text-xs font-semibold tabular-nums text-gray-500 outline-none" />
+              </label>
+              <label className="flex items-center justify-between gap-2 text-[11px] font-bold text-gray-800">
+                <span>Sub Total</span>
+                <input readOnly tabIndex={-1} value={money(totals.subTotal)} className="h-7 w-28 cursor-not-allowed rounded border border-transparent bg-gray-100 px-2 text-right text-xs font-bold tabular-nums text-gray-800 outline-none" />
+              </label>
             </div>
 
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Net Amount</p>
-              <p className="text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-50">{money(totals.net)}</p>
+              <p className="text-3xl font-extrabold uppercase tracking-wide text-blue-700">Net Amount</p>
+              <p className="text-3xl font-extrabold tabular-nums text-blue-700">{money(totals.net)}</p>
             </div>
 
             <button
