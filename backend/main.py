@@ -174,7 +174,7 @@ async def login(
         )
     return Token(
         access_token=create_access_token(
-            {"sub": user.email, "role": user.role, "tenant_id": user.tenant_id}
+            {"sub": user.email, "role": user.role, "tenant_id": user.tenant_id, "branch_id": user.branch_id}
         )
     )
 

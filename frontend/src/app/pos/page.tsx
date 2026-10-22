@@ -11,6 +11,7 @@ import { SEED as CUSTOMER_SEED, SearchCustomerModal, type PosCustomerRow } from 
 import { AppShell } from '../../components/AppShell';
 import type { CatalogProduct } from '../../components/ProductEditor';
 import { API_BASE, authHeaders } from '../../utils/api';
+import { decodeJwtPayload } from '../../utils/auth';
 import { fetchJson, useApi } from '../../utils/query';
 
 type CartLine = {
@@ -62,7 +63,44 @@ type SaleReceipt = {
   paid: number;
   change: number;
   previousPoints: number;
+  branch: ReceiptBranch;
 };
+
+type ReceiptBranch = {
+  name: string;
+  address: string;
+  phone: string;
+};
+
+const ACTIVE_BRANCH_KEY = 'pos_active_branch';
+const FALLBACK_BRANCH: ReceiptBranch = {
+  name: 'Bashundhara City (2)',
+  address: 'Shop No= 48,49. Level -3, Block - C, Bashundhara City, Dhaka , Dhaka-0',
+  phone: '01958387964',
+};
+
+function readStoredBranch(): ReceiptBranch | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ACTIVE_BRANCH_KEY) || 'null') as Partial<ReceiptBranch> | null;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const name = parsed.name?.trim();
+    if (!name) {
+      return null;
+    }
+    return {
+      name,
+      address: parsed.address?.trim() || 'Address unavailable',
+      phone: parsed.phone?.trim() || '—',
+    };
+  } catch {
+    return null;
+  }
+}
 
 const CATALOG_PAGE = `${API_BASE}/products/table?page=1&page_size=100&status=active`;
 const HELD_INVOICES_KEY = 'pos_held_invoices';
@@ -288,9 +326,9 @@ function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
     <article className="mx-auto w-[80mm] bg-white px-1 py-1 font-mono text-[10px] leading-tight text-black">
       <header className="text-center">
         <p className="bg-black py-1 text-sm font-bold tracking-wide text-white [print-color-adjust:exact]">Plus Point</p>
-        <p className="mt-1 text-xs">Bashundhara City (2)</p>
-        <p>Shop No= 48,49. Level -3, Block - C, Bashundhara City, Dhaka , Dhaka-0</p>
-        <p>01958387964</p>
+        <p className="mt-1 text-xs">{sale.branch?.name || FALLBACK_BRANCH.name}</p>
+        <p>{sale.branch?.address || FALLBACK_BRANCH.address}</p>
+        <p>{sale.branch?.phone || FALLBACK_BRANCH.phone}</p>
       </header>
 
       <div className="mt-1 border border-black py-0.5 text-center text-xs font-bold">MUSHAK: 6.3</div>
@@ -386,7 +424,7 @@ function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
       <ReceiptBarcode value={sale.invoiceNo} />
 
       <footer className="mt-1 text-center">
-        <p>01958387964 · www.pluspoint.com.bd</p>
+        <p>{sale.branch?.phone || FALLBACK_BRANCH.phone} · www.pluspoint.com.bd</p>
         <ul className="mt-1 list-disc pl-4 text-left">
           <li>Exchanges within 10 days.</li>
           <li>No cash refunds.</li>
@@ -425,6 +463,7 @@ export default function PosPage() {
   const [gender, setGender] = useState('Select');
   const [dob, setDob] = useState('');
   const [age, setAge] = useState('');
+  const [activeBranch, setActiveBranch] = useState<ReceiptBranch>(FALLBACK_BRANCH);
   const [discountPercent, setDiscountPercent] = useState('0');
   const [flatDiscountAmount, setFlatDiscountAmount] = useState('0.00');
   const [returnAmount, setReturnAmount] = useState(0);
@@ -453,6 +492,45 @@ export default function PosPage() {
 
   useEffect(() => {
     setHeldInvoices(readHeldInvoices());
+  }, []);
+
+  useEffect(() => {
+    const cached = readStoredBranch();
+    if (cached) {
+      setActiveBranch(cached);
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = localStorage.getItem('token') ?? '';
+        const payload = decodeJwtPayload(token);
+        const branchId = Number(payload.branch_id);
+        const branches = await fetchJson<Array<{ id: number; name?: string | null; address?: string | null; phone?: string | null; is_active?: boolean }>>(
+          `${API_BASE}/branches/?limit=200`,
+        );
+        const match =
+          branches.find((branch) => Number.isFinite(branchId) && branch.id === branchId) ??
+          branches.find((branch) => branch.is_active !== false) ??
+          branches[0];
+        if (!match || cancelled) {
+          return;
+        }
+        const next: ReceiptBranch = {
+          name: match.name?.trim() || FALLBACK_BRANCH.name,
+          address: match.address?.trim() || 'Address unavailable',
+          phone: match.phone?.trim() || '—',
+        };
+        setActiveBranch(next);
+        localStorage.setItem(ACTIVE_BRANCH_KEY, JSON.stringify(next));
+      } catch {
+        if (!cancelled && !cached) {
+          setActiveBranch(FALLBACK_BRANCH);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -999,6 +1077,7 @@ export default function PosPage() {
           paid,
           change,
           previousPoints: loyaltyPoints,
+          branch: activeBranch,
         });
       });
       window.setTimeout(() => window.print(), 50);
