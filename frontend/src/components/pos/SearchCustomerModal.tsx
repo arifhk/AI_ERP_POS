@@ -10,12 +10,15 @@ export type PosCustomerRow = {
   discount: number;
   doe: string;
   address: string;
+  email: string;
+  previousDue: number;
+  loyaltyPoints: number;
 };
 
 export const SEED: PosCustomerRow[] = [
-  { id: 'C-1001', firstName: 'Nadia', phone: '01711000001', type: 'VIP PASS', discount: 10, doe: '2024-01-12', address: 'Bashundhara R/A' },
-  { id: 'C-1002', firstName: 'Imran', phone: '01822000002', type: 'Regular', discount: 0, doe: '2024-06-03', address: 'Gulshan 2' },
-  { id: 'C-1003', firstName: 'Farhana', phone: '01933000003', type: 'VIP PASS', discount: 5, doe: '2025-02-18', address: 'Dhanmondi 15' },
+  { id: 'C-1001', firstName: 'Nadia', phone: '01711000001', type: 'VIP', discount: 10, doe: '2024-01-12', address: 'Bashundhara R/A', email: 'nadia@pluspoint.com', previousDue: 150, loyaltyPoints: 240 },
+  { id: 'C-1002', firstName: 'Imran', phone: '01822000002', type: 'Regular', discount: 0, doe: '2024-06-03', address: 'Gulshan 2', email: 'imran@pluspoint.com', previousDue: 0, loyaltyPoints: 40 },
+  { id: 'C-1003', firstName: 'Farhana', phone: '01933000003', type: 'VIP', discount: 5, doe: '2025-02-18', address: 'Dhanmondi 15', email: 'farhana@pluspoint.com', previousDue: 500, loyaltyPoints: 120 },
 ];
 
 export function SearchCustomerModal({

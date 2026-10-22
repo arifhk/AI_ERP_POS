@@ -4,9 +4,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { toast } from 'sonner';
 import { PosCameraScanner } from '../../components/PosCameraScanner';
+import { AddCustomerModal, type NewCustomerForm } from '../../components/pos/AddCustomerModal';
 import { RecallInvoiceModal, type HeldInvoice } from '../../components/pos/RecallInvoiceModal';
 import { ReprintModal } from '../../components/pos/ReprintModal';
-import { SEED as CUSTOMER_SEED, type PosCustomerRow } from '../../components/pos/SearchCustomerModal';
+import { SEED as CUSTOMER_SEED, SearchCustomerModal, type PosCustomerRow } from '../../components/pos/SearchCustomerModal';
 import { AppShell } from '../../components/AppShell';
 import type { CatalogProduct } from '../../components/ProductEditor';
 import { API_BASE, authHeaders } from '../../utils/api';
@@ -85,6 +86,10 @@ function formatHoldTimestamp(date = new Date()) {
   const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   const day = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
   return `${time}, ${day}`;
+}
+
+function membershipValue(type: string) {
+  return /vip/i.test(type) ? 'VIP' : 'Regular';
 }
 
 const DEFAULT_PAYMENT_METHODS = ['Cash', 'BKASH', 'NAGAD', 'Card'];
@@ -267,7 +272,13 @@ export default function PosPage() {
   const [customerCode, setCustomerCode] = useState('');
   const [customerId, setCustomerId] = useState<string | number | null>(null);
   const [directory, setDirectory] = useState<PosCustomerRow[]>(() => CUSTOMER_SEED.map((row) => ({ ...row })));
+  const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
+  const [isSearchCustomerOpen, setIsSearchCustomerOpen] = useState(false);
   const [isReprintOpen, setIsReprintOpen] = useState(false);
+  const [previousDue, setPreviousDue] = useState(0);
+  const [loyaltyPoints, setLoyaltyPoints] = useState(0);
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [membership, setMembership] = useState('Regular');
   const [discountPercent, setDiscountPercent] = useState('0');
   const [flatDiscountAmount, setFlatDiscountAmount] = useState('0.00');
   const [returnAmount, setReturnAmount] = useState(0);
@@ -433,6 +444,10 @@ export default function PosPage() {
       setCustomerCode(match.id);
       setCustomerName(match.firstName);
       setCustomerAddress(match.address);
+      setPreviousDue(match.previousDue || 0);
+      setLoyaltyPoints(match.loyaltyPoints || 0);
+      setCustomerEmail(match.email || '');
+      setMembership(membershipValue(match.type));
       focusBarcode();
       return;
     }
@@ -445,16 +460,23 @@ export default function PosPage() {
       discount: 0,
       doe: '',
       address: '',
+      email: '',
+      previousDue: 0,
+      loyaltyPoints: 0,
     };
     setDirectory((current) => [created, ...current.filter((row) => phoneDigits(row.phone) !== needle)]);
     setCustomerId(id);
     setCustomerCode(id);
     setCustomerName('');
     setCustomerAddress('');
+    setPreviousDue(0);
+    setLoyaltyPoints(0);
+    setCustomerEmail('');
+    setMembership('Regular');
     window.setTimeout(() => customerNameRef.current?.focus(), 0);
   }
 
-  function rememberCustomer(patch: Partial<Pick<PosCustomerRow, 'firstName' | 'address'>>) {
+  function rememberCustomer(patch: Partial<Pick<PosCustomerRow, 'firstName' | 'address' | 'email' | 'type'>>) {
     if (!customerCode) {
       return;
     }
@@ -505,6 +527,10 @@ export default function PosPage() {
     setCustomerCode('');
     setCustomerId(null);
     resolvedPhoneRef.current = '';
+    setPreviousDue(0);
+    setLoyaltyPoints(0);
+    setCustomerEmail('');
+    setMembership('Regular');
     setDiscountPercent('0');
     setFlatDiscountAmount('0.00');
     setReturnAmount(0);
@@ -552,6 +578,10 @@ export default function PosPage() {
     setCustomerCode('');
     setCustomerId(null);
     resolvedPhoneRef.current = '';
+    setPreviousDue(0);
+    setLoyaltyPoints(0);
+    setCustomerEmail('');
+    setMembership('Regular');
     setDiscountPercent('0');
     setFlatDiscountAmount('0.00');
     setReturnAmount(0);
@@ -675,6 +705,10 @@ export default function PosPage() {
     setCustomerCode('');
     setCustomerId(null);
     resolvedPhoneRef.current = '';
+    setPreviousDue(0);
+    setLoyaltyPoints(0);
+    setCustomerEmail('');
+    setMembership('Regular');
     setDiscountPercent('0');
     setFlatDiscountAmount('0.00');
     setReturnAmount(0);
@@ -802,6 +836,41 @@ export default function PosPage() {
     }
   }
 
+  function applyCustomer(row: PosCustomerRow) {
+    setCustomerCode(row.id);
+    setCustomerId(row.id);
+    setCustomerName(row.firstName);
+    setCustomerMobile(row.phone);
+    setCustomerAddress(row.address);
+    setPreviousDue(row.previousDue || 0);
+    setLoyaltyPoints(row.loyaltyPoints || 0);
+    setCustomerEmail(row.email || '');
+    setMembership(membershipValue(row.type));
+    resolvedPhoneRef.current = phoneDigits(row.phone);
+    setIsSearchCustomerOpen(false);
+    setIsAddCustomerOpen(false);
+    focusBarcode();
+  }
+
+  function saveCustomer(form: NewCustomerForm) {
+    const id = `C-${form.phone.replace(/\D/g, '') || Date.now()}`;
+    const row: PosCustomerRow = {
+      id,
+      firstName: form.firstName.trim() || form.phone.trim(),
+      phone: form.phone.trim(),
+      type: form.type,
+      discount: Number(form.discount) || 0,
+      doe: form.doe,
+      address: [form.address, form.city].filter(Boolean).join(', '),
+      email: form.email.trim(),
+      previousDue: 0,
+      loyaltyPoints: 0,
+    };
+    setDirectory((current) => [row, ...current.filter((item) => item.id !== row.id)]);
+    const name = [form.firstName, form.middleName, form.lastName].map((part) => part.trim()).filter(Boolean).join(' ');
+    applyCustomer({ ...row, firstName: name || row.firstName });
+  }
+
   function exchangeItem() {
     console.log('Exchange');
     setStatus('Exchange started.');
@@ -825,6 +894,11 @@ export default function PosPage() {
     setCustomerName(customer.name);
     setCustomerMobile(customer.phone);
     setCustomerAddress(customer.address);
+    const saved = directory.find((row) => phoneDigits(row.phone) === phoneDigits(customer.phone));
+    setPreviousDue(saved?.previousDue || 0);
+    setLoyaltyPoints(saved?.loyaltyPoints || 0);
+    setCustomerEmail(saved?.email || '');
+    setMembership(membershipValue(saved?.type || 'Regular'));
     resolvedPhoneRef.current = phoneDigits(customer.phone);
     setDiscountPercent(invoice.orderDiscountPercent || '0');
     setFlatDiscountAmount(invoice.orderDiscountAmount || '0.00');
@@ -867,7 +941,7 @@ export default function PosPage() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (payOpen || cameraOpen || isReprintOpen || isRecallOpen) {
+      if (payOpen || cameraOpen || isAddCustomerOpen || isSearchCustomerOpen || isReprintOpen || isRecallOpen) {
         return;
       }
       if (event.key === 'F2') {
@@ -959,30 +1033,64 @@ export default function PosPage() {
                 </div>
                 {scanNotice ? <p className="mt-1 text-sm font-medium text-rose-600">{scanNotice}</p> : null}
               </div>
+              <div className="space-y-2">
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
                 <label className="text-xs font-semibold text-slate-500">
                   Mobile No
-                  <input
-                    value={customerMobile}
-                    onChange={(event) => {
-                      setCustomerMobile(event.target.value);
-                      resolvedPhoneRef.current = '';
-                      setCustomerId(null);
-                      setCustomerCode('');
-                      setCustomerName('');
-                      setCustomerAddress('');
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
+                  <span className="mt-1 flex gap-1">
+                    <input
+                      value={customerMobile}
+                      onChange={(event) => {
+                        setCustomerMobile(event.target.value);
+                        resolvedPhoneRef.current = '';
+                        setCustomerId(null);
+                        setCustomerCode('');
+                        setCustomerName('');
+                        setCustomerAddress('');
+                        setPreviousDue(0);
+                        setLoyaltyPoints(0);
+                        setCustomerEmail('');
+                        setMembership('Regular');
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          resolveCustomer(event.currentTarget.value);
+                        }
+                      }}
+                      onBlur={(event) => {
+                        const next = event.relatedTarget;
+                        if (next instanceof HTMLElement && next.dataset.customerAction) {
+                          return;
+                        }
                         resolveCustomer(event.currentTarget.value);
-                      }
-                    }}
-                    onBlur={(event) => resolveCustomer(event.currentTarget.value)}
-                    placeholder="01XXXXXXXXX"
-                    inputMode="tel"
-                    className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-                  />
+                      }}
+                      placeholder="01XXXXXXXXX"
+                      inputMode="tel"
+                      className="min-h-[44px] min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Add Customer"
+                      data-customer-action="add"
+                      onClick={() => setIsAddCustomerOpen(true)}
+                      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md bg-emerald-600 text-xl font-bold text-white"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Search customer"
+                      data-customer-action="search"
+                      onClick={() => setIsSearchCustomerOpen(true)}
+                      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md bg-orange-500 text-white"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                        <circle cx="11" cy="11" r="7" />
+                        <path d="m20 20-3.5-3.5" />
+                      </svg>
+                    </button>
+                  </span>
                 </label>
                 <label className="text-xs font-semibold text-slate-500">
                   Customer Id
@@ -1026,6 +1134,56 @@ export default function PosPage() {
                     className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                   />
                 </label>
+              </div>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+                <label className="text-xs font-semibold text-slate-500">
+                  Previous Due
+                  <input
+                    readOnly
+                    tabIndex={-1}
+                    value={money(previousDue)}
+                    className="mt-1 min-h-[44px] w-full cursor-not-allowed rounded-md border border-transparent bg-gray-100 px-3 text-sm font-semibold text-gray-500 outline-none"
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-500">
+                  Loyalty Points
+                  <input
+                    readOnly
+                    tabIndex={-1}
+                    value={String(loyaltyPoints)}
+                    className="mt-1 min-h-[44px] w-full cursor-not-allowed rounded-md border border-transparent bg-gray-100 px-3 text-sm font-semibold text-gray-500 outline-none"
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-500">
+                  Email
+                  <input
+                    type="email"
+                    value={customerEmail}
+                    onChange={(event) => {
+                      const email = event.target.value;
+                      setCustomerEmail(email);
+                      rememberCustomer({ email });
+                    }}
+                    placeholder="name@email.com"
+                    className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-500">
+                  Membership
+                  <select
+                    value={membership}
+                    onChange={(event) => {
+                      const type = event.target.value;
+                      setMembership(type);
+                      rememberCustomer({ type });
+                    }}
+                    className="mt-1 min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                  >
+                    <option value="Regular">Regular</option>
+                    <option value="VIP">VIP</option>
+                  </select>
+                </label>
+              </div>
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
@@ -1231,6 +1389,10 @@ export default function PosPage() {
 
       {cameraOpen ? (
         <PosCameraScanner regionId="pos-camera-reader" onScan={submitScan} onClose={() => setCameraOpen(false)} />
+      ) : null}
+      {isAddCustomerOpen ? <AddCustomerModal onClose={() => setIsAddCustomerOpen(false)} onSave={saveCustomer} /> : null}
+      {isSearchCustomerOpen ? (
+        <SearchCustomerModal extraRows={directory} onClose={() => setIsSearchCustomerOpen(false)} onSelect={applyCustomer} />
       ) : null}
       {isReprintOpen ? <ReprintModal onClose={() => setIsReprintOpen(false)} onReprint={reprintInvoice} /> : null}
       {isRecallOpen ? (
