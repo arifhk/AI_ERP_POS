@@ -39,6 +39,9 @@ function money(amount: number) {
 }
 
 function formatHeldTime(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    return value;
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
@@ -51,8 +54,8 @@ function formatHeldTime(value: string) {
   });
 }
 
-function customerInfo(customer: HeldCustomer) {
-  const parts = [customer.name.trim(), customer.phone.trim(), customer.code.trim()].filter(Boolean);
+function customerInfo(customer: HeldCustomer | undefined) {
+  const parts = [customer?.name?.trim(), customer?.phone?.trim(), customer?.code?.trim()].filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : 'Walk-in';
 }
 
@@ -82,24 +85,24 @@ export function RecallInvoiceModal({
       <div role="dialog" aria-modal="true" aria-labelledby="recall-title" className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-slate-800">
         <div className="flex items-center justify-between bg-indigo-700 px-4 py-3 text-white">
           <h2 id="recall-title" className="text-base font-semibold">
-            Recall Invoice
+            Held Invoices List
           </h2>
           <button type="button" onClick={onClose} className="min-h-9 rounded-md px-3 text-sm font-semibold text-indigo-100 hover:bg-indigo-600">
             Close
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="max-h-[60vh] overflow-y-auto">
           {invoices.length === 0 ? (
             <p className="px-4 py-10 text-center text-sm text-slate-500">No invoices are on hold.</p>
           ) : (
             <table className="w-full border-collapse text-left text-sm">
               <thead className="sticky top-0 bg-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-900 dark:text-slate-300">
                 <tr>
-                  <th className="px-3 py-2">Time</th>
+                  <th className="px-3 py-2">Date/Time</th>
                   <th className="px-3 py-2">Customer Info</th>
-                  <th className="px-3 py-2 text-right">Items</th>
+                  <th className="px-3 py-2 text-right">Total Items</th>
                   <th className="px-3 py-2 text-right">Total Amount</th>
-                  <th className="px-3 py-2 text-right">Action</th>
+                  <th className="px-3 py-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -123,7 +126,7 @@ export function RecallInvoiceModal({
                           onClick={() => onDelete(invoice.id)}
                           className="min-h-9 rounded-md bg-rose-600 px-3 text-xs font-bold text-white hover:bg-rose-700"
                         >
-                          Delete
+                          Discard
                         </button>
                       </div>
                     </td>

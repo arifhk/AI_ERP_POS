@@ -90,6 +90,12 @@ function writeHeldInvoices(invoices: HeldInvoice[]) {
   localStorage.setItem(HELD_INVOICES_KEY, JSON.stringify(invoices));
 }
 
+function formatHoldTimestamp(date = new Date()) {
+  const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const day = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  return `${time}, ${day}`;
+}
+
 const DEFAULT_PAYMENT_METHODS = ['Cash', 'BKASH', 'NAGAD', 'Card'];
 
 function isCardMethod(method: string) {
@@ -546,7 +552,7 @@ export default function PosPage() {
     }
     const entry: HeldInvoice = {
       id: `H${Date.now()}`,
-      timestamp: new Date().toISOString(),
+      timestamp: formatHoldTimestamp(),
       itemCount: cart.reduce((sum, line) => sum + line.qty, 0),
       totalAmount: totals.net,
       cart: cart.map((line) => ({ ...line })),
@@ -566,7 +572,7 @@ export default function PosPage() {
     writeHeldInvoices(next);
     clearActiveSale();
     setStatus(null);
-    toast.success('Invoice put on hold');
+    toast.success('Invoice Held Successfully');
   }
 
   function cancelInvoice() {
