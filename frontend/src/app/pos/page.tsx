@@ -20,8 +20,6 @@ type CartLine = {
   disc: number;
 };
 
-type PaymentType = 'Cash' | 'BKASH' | 'NAGAD' | 'Card';
-
 type ProductTable = {
   items?: CatalogProduct[];
   pages?: number;
@@ -43,6 +41,25 @@ type InvoiceCustomer = {
   address: string;
 };
 
+type SaleReceipt = {
+  invoiceNo: string;
+  issuedAt: string;
+  customer: InvoiceCustomer;
+  lines: CartLine[];
+  qty: number;
+  total: number;
+  sd: number;
+  vat: number;
+  discountPercent: string;
+  discount: number;
+  returnAmount: number;
+  subTotal: number;
+  net: number;
+  payments: { method: string; amount: number; bankName?: string; accountNumber?: string }[];
+  paid: number;
+  change: number;
+};
+
 type CustomerHit = {
   id?: string | number | null;
   customer_phone?: string;
@@ -53,7 +70,11 @@ type CustomerHit = {
 
 const CATALOG_PAGE = `${API_BASE}/products/table?page=1&page_size=100&status=active`;
 
-const PAYMENT_TYPES: PaymentType[] = ['Cash', 'BKASH', 'NAGAD', 'Card'];
+const DEFAULT_PAYMENT_METHODS = ['Cash', 'BKASH', 'NAGAD', 'Card'];
+
+function isCardMethod(method: string) {
+  return /card/i.test(method);
+}
 
 function sellable(id: string, barcode: string, name: string, price: number, vat: number): Sellable {
   return { id, barcode, name, price, vat };
@@ -109,6 +130,45 @@ function money(amount: number) {
   return `${amount < 0 ? '-' : ''}${grouped}.${fraction}`;
 }
 
+function clampPercent(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, parsed));
+}
+
+function formatAmountInput(value: number) {
+  return (Math.round(value * 100) / 100).toFixed(2);
+}
+
+function formatPercentInput(value: number) {
+  return String(Math.round(value * 100) / 100);
+}
+
+type TenderEntry = { on: boolean; amount: string; bankName: string; accountNumber: string };
+
+type TenderState = Record<string, TenderEntry>;
+
+function blankTender(): TenderEntry {
+  return { on: false, amount: '', bankName: '', accountNumber: '' };
+}
+
+function blankTenders(methods: string[]): TenderState {
+  return Object.fromEntries(methods.map((method) => [method, blankTender()]));
+}
+
+function tenderTotal(tenders: TenderState, methods: string[]) {
+  return methods.reduce((sum, method) => {
+    const tender = tenders[method];
+    if (!tender?.on) {
+      return sum;
+    }
+    const value = Number(tender.amount);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
 function lineGross(line: CartLine) {
   return line.price * line.qty;
 }
@@ -123,6 +183,104 @@ function lineVat(line: CartLine) {
 
 function lineTotal(line: CartLine) {
   return lineGross(line) - lineDiscount(line) + lineVat(line);
+}
+
+function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
+  const customerBits = [sale.customer.name, sale.customer.phone, sale.customer.address].filter(Boolean);
+  return (
+    <>
+      <style>{`
+        @media screen {
+          #pos-receipt { position: absolute; width: 0; height: 0; overflow: hidden; }
+        }
+        @media print {
+          body * { visibility: hidden; }
+          #pos-receipt, #pos-receipt * { visibility: visible; }
+          #pos-receipt {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 80mm;
+            height: auto;
+            overflow: visible;
+            background: #fff;
+            color: #000;
+          }
+          @page { size: 80mm auto; margin: 4mm; }
+        }
+      `}</style>
+      <article id="pos-receipt" className="bg-white font-mono text-[11px] leading-snug text-black">
+        <header className="border-b border-dashed border-black pb-2 text-center">
+          <p className="text-sm font-bold">Bashundhara City</p>
+          <p>Terminal 01</p>
+          <p>{sale.issuedAt}</p>
+          <p className="font-bold">Invoice {sale.invoiceNo}</p>
+        </header>
+        {customerBits.length > 0 ? (
+          <p className="border-b border-dashed border-black py-2">
+            {sale.customer.code ? `Customer ${sale.customer.code}` : 'Customer'}
+            <br />
+            {customerBits.join(' · ')}
+          </p>
+        ) : (
+          <p className="border-b border-dashed border-black py-2">Walk-in</p>
+        )}
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="border-b border-black text-left">
+              <th className="py-1 font-semibold">Item</th>
+              <th className="py-1 text-right font-semibold">Qty</th>
+              <th className="py-1 text-right font-semibold">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sale.lines.map((line, index) => (
+              <tr key={line.id} className="align-top">
+                <td className="py-1 pr-2">
+                  {index + 1}. {line.name}
+                  <br />
+                  <span>
+                    {line.barcode} · {money(line.price)}
+                    {line.vat ? ` · VAT ${line.vat}%` : ''}
+                    {line.disc ? ` · Disc ${line.disc}%` : ''}
+                  </span>
+                </td>
+                <td className="py-1 text-right tabular-nums">{line.qty}</td>
+                <td className="py-1 text-right tabular-nums">{money(lineTotal(line))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <dl className="mt-1 space-y-0.5 border-t border-dashed border-black pt-2">
+          <div className="flex justify-between"><dt>Total Line</dt><dd className="tabular-nums">{sale.lines.length}</dd></div>
+          <div className="flex justify-between"><dt>Total Qty</dt><dd className="tabular-nums">{sale.qty}</dd></div>
+          <div className="flex justify-between"><dt>Total</dt><dd className="tabular-nums">{money(sale.total)}</dd></div>
+          <div className="flex justify-between"><dt>SD Amount</dt><dd className="tabular-nums">{money(sale.sd)}</dd></div>
+          <div className="flex justify-between"><dt>VAT</dt><dd className="tabular-nums">{money(sale.vat)}</dd></div>
+          <div className="flex justify-between"><dt>Discount (%)</dt><dd className="tabular-nums">{sale.discountPercent}</dd></div>
+          <div className="flex justify-between"><dt>Discount</dt><dd className="tabular-nums">{money(sale.discount)}</dd></div>
+          <div className="flex justify-between"><dt>Return Amount</dt><dd className="tabular-nums">{money(sale.returnAmount)}</dd></div>
+          <div className="flex justify-between"><dt>Sub Total</dt><dd className="tabular-nums">{money(sale.subTotal)}</dd></div>
+          <div className="flex justify-between text-sm font-bold"><dt>NET AMOUNT</dt><dd className="tabular-nums">{money(sale.net)}</dd></div>
+        </dl>
+        <div className="mt-2 border-t border-dashed border-black pt-2">
+          {sale.payments.map((payment) => (
+            <div key={payment.method} className="flex justify-between gap-2">
+              <span>
+                {payment.method}
+                {payment.bankName ? ` · ${payment.bankName}` : ''}
+                {payment.accountNumber ? ` · ${payment.accountNumber}` : ''}
+              </span>
+              <span className="shrink-0 tabular-nums">{money(payment.amount)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between"><span>Total Paid</span><span className="tabular-nums">{money(sale.paid)}</span></div>
+          <div className="flex justify-between font-bold"><span>Change</span><span className="tabular-nums">{money(sale.change)}</span></div>
+        </div>
+        <p className="mt-3 text-center">Thank you</p>
+      </article>
+    </>
+  );
 }
 
 export default function PosPage() {
@@ -143,17 +301,23 @@ export default function PosPage() {
   const [isSearchCustomerOpen, setIsSearchCustomerOpen] = useState(false);
   const [isReprintOpen, setIsReprintOpen] = useState(false);
   const [orderDiscountPercent, setOrderDiscountPercent] = useState('0');
+  const [orderDiscountAmount, setOrderDiscountAmount] = useState('0.00');
   const [returnAmount, setReturnAmount] = useState(0);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const customerNameRef = useRef<HTMLInputElement>(null);
-  const paidAmountRef = useRef<HTMLInputElement>(null);
   const latestIdRef = useRef<string | null>(null);
+  const discountEditRef = useRef<'percent' | 'amount'>('percent');
+  const percentRef = useRef('0');
+  const amountRef = useRef('0.00');
+  const tenderRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [payOpen, setPayOpen] = useState(false);
-  const [paymentType, setPaymentType] = useState<PaymentType>('Cash');
-  const [nonCash, setNonCash] = useState('0.00');
-  const [cardNumber, setCardNumber] = useState('');
-  const [cashAmt, setCashAmt] = useState('0.00');
-  const [paidAmount, setPaidAmount] = useState('0.00');
+  const [paymentMethods, setPaymentMethods] = useState(['Cash', 'BKASH', 'NAGAD', 'Card']);
+  const [banks, setBanks] = useState(['City Bank', 'Brac Bank', 'DBBL']);
+  const [newMethod, setNewMethod] = useState('');
+  const [newBank, setNewBank] = useState('');
+  const [tenders, setTenders] = useState<TenderState>(() => blankTenders(DEFAULT_PAYMENT_METHODS));
+  const [payError, setPayError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<SaleReceipt | null>(null);
   const [clock, setClock] = useState('11 Oct 2026');
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
   const { data: firstPage, error: catalogError } = useApi<ProductTable>(CATALOG_PAGE);
@@ -200,28 +364,48 @@ export default function PosPage() {
   const totals = useMemo(() => {
     const total = cart.reduce((sum, line) => sum + lineGross(line), 0);
     const totalLineDiscount = cart.reduce((sum, line) => sum + lineDiscount(line), 0);
-    const parsedPercent = Number(orderDiscountPercent);
-    const percent = Number.isFinite(parsedPercent) ? Math.min(100, Math.max(0, parsedPercent)) : 0;
-    const discount = totalLineDiscount + total * (percent / 100);
     const vat = cart.reduce((sum, line) => sum + lineVat(line), 0);
     const qty = cart.reduce((sum, line) => sum + line.qty, 0);
     const sd = 0;
-    const subTotal = total + sd + vat - discount - returnAmount;
+    const discountBase = Math.max(0, total + sd + vat - totalLineDiscount - returnAmount);
+    const parsedAmount = Number(orderDiscountAmount);
+    const orderAmount = Number.isFinite(parsedAmount) ? Math.min(discountBase, Math.max(0, parsedAmount)) : 0;
+    const discount = totalLineDiscount + orderAmount;
+    const subTotal = discountBase - orderAmount;
     return {
       lines: cart.length,
       qty,
       total,
       sd,
       vat,
+      discountBase,
       discount,
       returnAmount,
       subTotal,
       net: subTotal,
     };
-  }, [cart, orderDiscountPercent, returnAmount]);
+  }, [cart, orderDiscountAmount, returnAmount]);
 
-  const paidValue = Number(paidAmount);
-  const changeAmount = Number.isFinite(paidValue) ? paidValue - totals.net : 0;
+  percentRef.current = orderDiscountPercent;
+  amountRef.current = orderDiscountAmount;
+
+  useEffect(() => {
+    const base = totals.discountBase;
+    if (discountEditRef.current === 'amount') {
+      const raw = Number(amountRef.current);
+      const amount = Number.isFinite(raw) ? Math.min(Math.max(0, raw), base) : 0;
+      const percent = base > 0 ? (amount / base) * 100 : 0;
+      setOrderDiscountPercent(formatPercentInput(percent));
+      setOrderDiscountAmount(formatAmountInput(amount));
+      return;
+    }
+    const percent = clampPercent(percentRef.current);
+    setOrderDiscountAmount(formatAmountInput((base * percent) / 100));
+  }, [totals.discountBase]);
+
+  const totalPaid = tenderTotal(tenders, paymentMethods);
+  const dueAmount = Math.max(0, Math.round((totals.net - totalPaid) * 100) / 100);
+  const changeAmount = Math.max(0, Math.round((totalPaid - totals.net) * 100) / 100);
   const currentOrder = useMemo(
     () => ({
       customer: {
@@ -368,10 +552,32 @@ export default function PosPage() {
     setCustomerCode('');
     setCustomerId(null);
     setOrderDiscountPercent('0');
+    setOrderDiscountAmount('0.00');
+    discountEditRef.current = 'percent';
     setReturnAmount(0);
     setStatus('Invoice cancelled.');
     setPayOpen(false);
     focusBarcode();
+  }
+
+  function onDiscountPercentChange(value: string) {
+    discountEditRef.current = 'percent';
+    setOrderDiscountPercent(value);
+    setOrderDiscountAmount(formatAmountInput((totals.discountBase * clampPercent(value)) / 100));
+  }
+
+  function onDiscountAmountChange(value: string) {
+    discountEditRef.current = 'amount';
+    const parsed = Number(value);
+    if (value.trim() === '' || !Number.isFinite(parsed)) {
+      setOrderDiscountAmount(value);
+      setOrderDiscountPercent('0');
+      return;
+    }
+    const capped = Math.min(Math.max(0, parsed), totals.discountBase);
+    setOrderDiscountAmount(parsed > totals.discountBase ? formatAmountInput(capped) : value);
+    const percent = totals.discountBase > 0 ? (capped / totals.discountBase) * 100 : 0;
+    setOrderDiscountPercent(formatPercentInput(percent));
   }
 
   function openPay() {
@@ -379,36 +585,95 @@ export default function PosPage() {
       setStatus('Add at least one item before payment.');
       return;
     }
-    const net = totals.net.toFixed(2);
-    setPaymentType('Cash');
-    setNonCash('0.00');
-    setCardNumber('');
-    setCashAmt(net);
-    setPaidAmount(net);
+    setTenders(blankTenders(paymentMethods));
+    setNewMethod('');
+    setNewBank('');
+    setPayError(null);
     setPayOpen(true);
   }
 
-  function applyPaymentType(next: PaymentType) {
-    setPaymentType(next);
-    const net = totals.net.toFixed(2);
-    if (next === 'Cash') {
-      setNonCash('0.00');
-      setCardNumber('');
-      setCashAmt(net);
-      setPaidAmount(net);
-      return;
+  function toggleTender(method: string, on: boolean) {
+    setPayError(null);
+    setTenders((current) => {
+      const previous = current[method] ?? blankTender();
+      if (!on) {
+        return { ...current, [method]: { ...previous, on: false, amount: '' } };
+      }
+      const paidByOthers = paymentMethods.reduce((sum, key) => {
+        if (key === method || !current[key]?.on) {
+          return sum;
+        }
+        const value = Number(current[key].amount);
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0);
+      const due = Math.round((totals.net - paidByOthers) * 100) / 100;
+      return {
+        ...current,
+        [method]: {
+          ...previous,
+          on: true,
+          amount: due > 0 ? due.toFixed(2) : '',
+          bankName: isCardMethod(method) ? previous.bankName || banks[0] || '' : '',
+        },
+      };
+    });
+    if (on) {
+      window.setTimeout(() => {
+        tenderRefs.current[method]?.focus();
+        tenderRefs.current[method]?.select();
+      }, 0);
     }
-    setNonCash(net);
-    setCashAmt('0.00');
-    setPaidAmount(net);
   }
 
-  function confirmPay() {
-    if (!Number.isFinite(paidValue) || paidValue < totals.net) {
+  function setTenderAmount(method: string, amount: string) {
+    setPayError(null);
+    setTenders((current) => ({ ...current, [method]: { ...(current[method] ?? blankTender()), amount } }));
+  }
+
+  function setTenderBank(method: string, patch: Partial<Pick<TenderEntry, 'bankName' | 'accountNumber'>>) {
+    setTenders((current) => ({ ...current, [method]: { ...(current[method] ?? blankTender()), ...patch } }));
+  }
+
+  function addPaymentMethod() {
+    const name = newMethod.trim();
+    if (!name) {
       return;
     }
-    const who = currentOrder.customer.name || currentOrder.customer.phone || 'Walk-in';
-    setStatus(`Paid ${money(currentOrder.totals.net)} · ${paymentType} · ${who}`);
+    if (paymentMethods.some((method) => method.toLowerCase() === name.toLowerCase())) {
+      setNewMethod('');
+      return;
+    }
+    setPaymentMethods((current) => [...current, name]);
+    setTenders((current) => ({ ...current, [name]: blankTender() }));
+    setNewMethod('');
+    // TODO: POST the new payment method to the backend payment-methods API so every terminal sees it.
+  }
+
+  function addBank() {
+    const name = newBank.trim();
+    if (!name) {
+      return;
+    }
+    if (banks.some((bank) => bank.toLowerCase() === name.toLowerCase())) {
+      setNewBank('');
+      return;
+    }
+    setBanks((current) => [...current, name]);
+    setTenders((current) => {
+      const next = { ...current };
+      for (const method of paymentMethods) {
+        const tender = next[method];
+        if (isCardMethod(method) && tender?.on && !tender.bankName) {
+          next[method] = { ...tender, bankName: name };
+        }
+      }
+      return next;
+    });
+    setNewBank('');
+    // TODO: POST the new bank name to the backend banks API so every terminal sees it.
+  }
+
+  function resetSale() {
     latestIdRef.current = null;
     setCart([]);
     setSelectedId(null);
@@ -418,9 +683,63 @@ export default function PosPage() {
     setCustomerCode('');
     setCustomerId(null);
     setOrderDiscountPercent('0');
+    setOrderDiscountAmount('0.00');
+    discountEditRef.current = 'percent';
     setReturnAmount(0);
+    setPayError(null);
+    setTenders(blankTenders(paymentMethods));
     setPayOpen(false);
-    focusBarcode();
+  }
+
+  function confirmPay() {
+    const paid = tenderTotal(tenders, paymentMethods);
+    const shortfall = Math.round((totals.net - paid) * 100) / 100;
+    if (shortfall > 0) {
+      setPayError(`Payment Incomplete! Due Amount: ${money(shortfall)} TK`);
+      return;
+    }
+    const payments = paymentMethods.flatMap((method) => {
+      const tender = tenders[method];
+      if (!tender?.on || !(Number(tender.amount) > 0)) {
+        return [];
+      }
+      const card = isCardMethod(method);
+      return [
+        {
+          method,
+          amount: Number(tender.amount),
+          ...(card && tender.bankName ? { bankName: tender.bankName } : {}),
+          ...(card && tender.accountNumber.trim() ? { accountNumber: tender.accountNumber.trim() } : {}),
+        },
+      ];
+    });
+    const who = currentOrder.customer.name || currentOrder.customer.phone || 'Walk-in';
+    setStatus(`Paid ${money(totals.net)} · ${payments.map((payment) => payment.method).join(', ') || 'Cash'} · ${who}`);
+    setPayOpen(false);
+    setReceipt({
+      invoiceNo: `INV${Date.now().toString().slice(-8)}`,
+      issuedAt: new Date().toLocaleString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      customer: currentOrder.customer,
+      lines: cart.map((line) => ({ ...line })),
+      qty: totals.qty,
+      total: totals.total,
+      sd: totals.sd,
+      vat: totals.vat,
+      discountPercent: orderDiscountPercent,
+      discount: totals.discount,
+      returnAmount: totals.returnAmount,
+      subTotal: totals.subTotal,
+      net: totals.net,
+      payments,
+      paid,
+      change: Math.max(0, Math.round((paid - totals.net) * 100) / 100),
+    });
   }
 
   function applyCustomer(row: PosCustomerRow) {
@@ -481,12 +800,21 @@ export default function PosPage() {
   }
 
   useEffect(() => {
-    if (!payOpen) {
+    if (!receipt) {
       return;
     }
-    const timer = window.setTimeout(() => paidAmountRef.current?.focus(), 0);
-    return () => window.clearTimeout(timer);
-  }, [payOpen]);
+    function finishPrinting() {
+      resetSale();
+      setReceipt(null);
+      focusBarcode();
+    }
+    window.addEventListener('afterprint', finishPrinting);
+    const timer = window.setTimeout(() => window.print(), 50);
+    return () => {
+      window.removeEventListener('afterprint', finishPrinting);
+      window.clearTimeout(timer);
+    };
+  }, [receipt]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -805,14 +1133,22 @@ export default function PosPage() {
                 <span>Discount (%)</span>
                 <input
                   value={orderDiscountPercent}
-                  onChange={(event) => setOrderDiscountPercent(event.target.value)}
+                  onChange={(event) => onDiscountPercentChange(event.target.value)}
+                  inputMode="decimal"
+                  className="h-7 w-28 rounded border border-slate-400 bg-slate-100 px-2 text-right text-xs tabular-nums text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-sky-500/30 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100 dark:focus:bg-slate-900"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                <span>Discount</span>
+                <input
+                  value={orderDiscountAmount}
+                  onChange={(event) => onDiscountAmountChange(event.target.value)}
                   inputMode="decimal"
                   className="h-7 w-28 rounded border border-slate-400 bg-slate-100 px-2 text-right text-xs tabular-nums text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-sky-500/30 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100 dark:focus:bg-slate-900"
                 />
               </label>
               {(
                 [
-                  ['Discount', money(totals.discount)],
                   ['Return Amount', money(totals.returnAmount)],
                   ['Sub Total', money(totals.subTotal)],
                 ] as const
@@ -867,13 +1203,17 @@ export default function PosPage() {
                 return;
               }
               const target = event.target;
-              if (target instanceof HTMLButtonElement) {
+              if (
+                target instanceof HTMLButtonElement ||
+                target instanceof HTMLSelectElement ||
+                (target instanceof HTMLInputElement && (target.type === 'checkbox' || target.dataset.skipPay === 'true'))
+              ) {
                 return;
               }
               event.preventDefault();
               confirmPay();
             }}
-            className="w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-slate-800"
+            className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl dark:bg-slate-800"
           >
             <div className="flex items-center justify-between bg-slate-800 px-4 py-3 text-white">
               <h2 id="invoice-payment-title" className="text-base font-semibold">
@@ -881,113 +1221,139 @@ export default function PosPage() {
               </h2>
               <p className="text-sm text-slate-300">Bashundhara City · Terminal 01</p>
             </div>
-            <div className="grid gap-4 p-4 sm:grid-cols-2">
-              <div className="space-y-3">
-                <label className="block text-xs font-semibold text-slate-500">
-                  Mobile
-                  <input
-                    value={customerMobile}
-                    onChange={(event) => setCustomerMobile(event.target.value)}
-                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 px-3 text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-                  />
-                </label>
-                <label className="block text-xs font-semibold text-slate-500">
-                  Invoice Amount
-                  <input
-                    readOnly
-                    value={money(totals.net)}
-                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-200 bg-slate-50 px-3 text-lg font-semibold tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-                  />
-                </label>
-                <label className="block text-xs font-semibold text-slate-500">
-                  Payment Type
-                  <select
-                    value={paymentType}
-                    onChange={(event) => applyPaymentType(event.target.value as PaymentType)}
-                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-                  >
-                    {PAYMENT_TYPES.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="space-y-3">
-                <label className="block text-xs font-semibold text-slate-500">
-                  Non-Cash Amt
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={nonCash}
-                    onChange={(event) => setNonCash(event.target.value)}
-                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 px-3 text-right text-sm tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-                  />
-                </label>
-                <label className="block text-xs font-semibold text-slate-500">
-                  Card Number
-                  <input
-                    value={cardNumber}
-                    onChange={(event) => setCardNumber(event.target.value)}
-                    disabled={paymentType !== 'Card'}
-                    placeholder={paymentType === 'Card' ? 'XXXX XXXX XXXX XXXX' : 'Not required'}
-                    className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 px-3 text-sm disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-700"
-                  />
-                </label>
+            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-4">
+              {paymentMethods.map((method) => {
+                const tender = tenders[method] ?? blankTender();
+                const showBank = tender.on && isCardMethod(method);
+                const showAddBank =
+                  showBank && paymentMethods.find((name) => isCardMethod(name) && tenders[name]?.on) === method;
+                return (
+                  <div key={method}>
+                    <div className="flex items-center gap-3">
+                      <label title={method} className="flex min-h-11 w-32 shrink-0 items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                        <input
+                          type="checkbox"
+                          checked={tender.on}
+                          onChange={(event) => toggleTender(method, event.target.checked)}
+                          className="h-4 w-4 shrink-0 accent-emerald-600"
+                        />
+                        <span className="truncate">{method}</span>
+                      </label>
+                      {tender.on ? (
+                        <input
+                          ref={(node) => {
+                            tenderRefs.current[method] = node;
+                          }}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={tender.amount}
+                          onChange={(event) => setTenderAmount(method, event.target.value)}
+                          aria-label={`${method} amount`}
+                          className="h-11 min-w-0 flex-1 rounded-md border border-slate-300 px-3 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-emerald-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                        />
+                      ) : (
+                        <div className="h-11 flex-1" />
+                      )}
+                    </div>
+                    {showBank ? (
+                      <div className="mb-1 ml-6 flex flex-wrap items-center gap-1.5">
+                        <select
+                          aria-label={`${method} bank`}
+                          value={tender.bankName}
+                          onChange={(event) => setTenderBank(method, { bankName: event.target.value })}
+                          className="h-8 min-w-[7.5rem] flex-1 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                        >
+                          <option value="">Select bank</option>
+                          {banks.map((bank) => (
+                            <option key={bank} value={bank}>
+                              {bank}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          value={tender.accountNumber}
+                          onChange={(event) => setTenderBank(method, { accountNumber: event.target.value })}
+                          placeholder="A/C no. (optional)"
+                          aria-label={`${method} account number`}
+                          className="h-8 min-w-[8rem] flex-1 rounded-md border border-slate-300 px-2 text-xs outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                        />
+                        {showAddBank ? (
+                          <>
+                            <input
+                              value={newBank}
+                              data-skip-pay="true"
+                              onChange={(event) => setNewBank(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  addBank();
+                                }
+                              }}
+                              placeholder="New bank"
+                              aria-label="New bank name"
+                              className="h-8 w-24 rounded-md border border-slate-300 px-2 text-xs outline-none focus:ring-2 focus:ring-sky-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                            />
+                            <button type="button" onClick={addBank} className="h-8 shrink-0 text-xs font-semibold text-sky-700 hover:text-sky-900 dark:text-sky-300">
+                              + Add Bank
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  value={newMethod}
+                  data-skip-pay="true"
+                  onChange={(event) => setNewMethod(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      addPaymentMethod();
+                    }
+                  }}
+                  placeholder="New method"
+                  aria-label="New payment method"
+                  className="h-8 w-36 rounded-md border border-slate-300 px-2 text-xs outline-none focus:ring-2 focus:ring-emerald-500/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                />
+                <button type="button" onClick={addPaymentMethod} className="h-8 text-xs font-semibold text-emerald-700 hover:text-emerald-900 dark:text-emerald-300">
+                  + Add Method
+                </button>
               </div>
             </div>
-            <div className="grid gap-3 border-t border-slate-200 px-4 py-4 sm:grid-cols-3 dark:border-slate-700">
-              <label className="block text-xs font-semibold text-slate-500">
-                Cash Amt
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cashAmt}
-                  onChange={(event) => setCashAmt(event.target.value)}
-                  className="mt-1 min-h-[48px] w-full rounded-md border border-slate-300 px-3 text-right tabular-nums dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-                />
-              </label>
-              <label className="block text-xs font-semibold text-slate-500">
-                Paid Amount
-                <input
-                  ref={paidAmountRef}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={paidAmount}
-                  onChange={(event) => setPaidAmount(event.target.value)}
-                  className="mt-1 min-h-[48px] w-full rounded-md border border-emerald-300 bg-emerald-50 px-3 text-right text-lg font-semibold tabular-nums dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100"
-                />
-              </label>
-              <label className="block text-xs font-semibold text-slate-500">
-                Change Amount
-                <input
-                  readOnly
-                  value={money(Math.max(0, changeAmount))}
-                  className="mt-1 min-h-[48px] w-full rounded-md border border-slate-200 bg-slate-50 px-3 text-right text-lg font-bold tabular-nums text-emerald-700 dark:border-slate-600 dark:bg-slate-900 dark:text-emerald-300"
-                />
-              </label>
-            </div>
-            {changeAmount < 0 ? <p className="px-4 pb-2 text-sm font-medium text-rose-600">Paid amount is short by {money(Math.abs(changeAmount))}.</p> : null}
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-slate-200 px-4 py-3 text-sm dark:border-slate-700">
+              <dt className="font-semibold text-slate-500">Net Payable Amount</dt>
+              <dd className="text-right text-base font-bold tabular-nums text-slate-900 dark:text-slate-50">{money(totals.net)}</dd>
+              <dt className="font-semibold text-slate-500">Total Paid</dt>
+              <dd className="text-right font-semibold tabular-nums text-slate-900 dark:text-slate-50">{money(totalPaid)}</dd>
+              <dt className="font-semibold text-slate-500">Due Amount</dt>
+              <dd className={`text-right font-bold tabular-nums ${dueAmount > 0 ? 'text-rose-600' : 'text-slate-900 dark:text-slate-50'}`}>{money(dueAmount)}</dd>
+              <dt className="font-semibold text-slate-500">Change/Return Amount</dt>
+              <dd className="text-right font-bold tabular-nums text-emerald-700 dark:text-emerald-300">{money(changeAmount)}</dd>
+            </dl>
+            {payError ? (
+              <p role="alert" className="mx-4 mb-3 rounded-md bg-rose-600 px-3 py-2 text-center text-sm font-bold text-white">
+                {payError}
+              </p>
+            ) : null}
             <div className="flex justify-end gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-700">
               <button type="button" onClick={() => setPayOpen(false)} className="min-h-[48px] touch-manipulation rounded-md bg-slate-200 px-6 text-sm font-semibold text-slate-800">
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={confirmPay}
-                className="min-h-[48px] touch-manipulation rounded-md bg-emerald-600 px-8 text-sm font-bold text-white disabled:bg-emerald-300"
-                disabled={changeAmount < 0}
-              >
+              <button type="button" onClick={confirmPay} className="min-h-[48px] touch-manipulation rounded-md bg-emerald-600 px-8 text-sm font-bold text-white">
                 Ok
               </button>
             </div>
           </div>
         </div>
       ) : null}
+      {receipt ? <ThermalReceipt sale={receipt} /> : null}
     </AppShell>
   );
 }
