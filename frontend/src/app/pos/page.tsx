@@ -315,6 +315,16 @@ function ReceiptBarcode({ value }: { value: string }) {
   );
 }
 
+function ReceiptField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[70px_10px_1fr]">
+      <span>{label}</span>
+      <span>:</span>
+      <span className="font-bold">{value}</span>
+    </div>
+  );
+}
+
 function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
   const printDate = new Date().toLocaleString('en-GB', {
     day: '2-digit',
@@ -331,107 +341,106 @@ function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
   const currentPoint = previousPoint - redeemPoint + earnedPoint;
   const payments = sale.payments.filter((payment) => payment.amount > 0);
   const design = sale.design ?? DEFAULT_INVOICE_SETTINGS;
-  const policies = design.returnPolicy.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const policies = design.returnPolicy.split(/\n+/).map((line) => line.replace(/^\*\s*/, '').trim()).filter(Boolean);
   const paperWidth = design.paperSize === 'A4' ? 'w-[210mm]' : design.paperSize === 'A5' ? 'w-[148mm]' : 'w-[80mm]';
+  const cell = 'border border-black px-0.5 py-0.5';
   return (
-    <article className={`mx-auto bg-white px-1 py-1 font-mono text-[10px] leading-tight text-black ${paperWidth}`}>
+    <article className={`mx-auto bg-white px-1 py-1 font-sans text-[11px] leading-tight text-black ${paperWidth}`}>
       <header className="text-center">
         {design.logoData ? <img src={design.logoData} alt="" className="mx-auto mb-1 h-10 w-10 object-contain" /> : null}
-        <p className="bg-black py-1 text-sm font-bold tracking-wide text-white [print-color-adjust:exact]">{design.companyName || 'Plus Point'}</p>
+        <p className="mx-auto w-max bg-black px-4 py-1 text-center text-2xl font-bold text-white [print-color-adjust:exact]">{design.companyName || 'Plus Point'}</p>
         {design.headerNote ? <p className="mt-1">{design.headerNote}</p> : null}
-        <p className="mt-1 text-xs">{sale.branch?.name || FALLBACK_BRANCH.name}</p>
+        <p className="mt-1 font-bold">{sale.branch?.name || FALLBACK_BRANCH.name}</p>
         <p>{sale.branch?.address || FALLBACK_BRANCH.address}</p>
         <p>{sale.branch?.phone || FALLBACK_BRANCH.phone}</p>
       </header>
 
-      <div className="mt-1 border border-black py-0.5 text-center text-xs font-bold">MUSHAK: 6.3</div>
+      <div className="mt-1 border border-black py-0.5 text-center font-bold">MUSHAK: 6.3</div>
 
-      <div className="mt-1 grid grid-cols-2 gap-x-2">
-        <p>Invoice No: {sale.invoiceNo}</p>
-        <p>Invoice Date: {sale.issuedAt}</p>
-        <p>Print Date: {printDate}</p>
-        <div>
-          <p>VAT Reg.: {design.taxId || '—'}</p>
-          <p className="font-bold">DUPLICATE-</p>
-        </div>
+      <div className="mt-1">
+        <ReceiptField label="Invoice No" value={sale.invoiceNo} />
+        <ReceiptField label="Date" value={sale.issuedAt} />
+        <ReceiptField label="Print Date" value={printDate} />
+        <ReceiptField label="VAT Reg" value={design.taxId || '—'} />
+        <p className="font-bold">DUPLICATE-</p>
       </div>
 
-      <div className="mt-1 grid grid-cols-2 gap-x-2 border-t border-black pt-1">
-        <p>Name: {sale.customer.name || 'Walk-in'}</p>
-        <p>Address: {sale.customer.address || '—'}</p>
-        <p>Mobile: {sale.customer.phone || '—'}</p>
-        <p>Served by: samad</p>
+      <div className="mt-1 border-t border-black pt-1">
+        <ReceiptField label="Name" value={sale.customer.name || 'Walk-in'} />
+        <ReceiptField label="Address" value={sale.customer.address || '—'} />
+        <ReceiptField label="Mobile" value={sale.customer.phone || '—'} />
+        <ReceiptField label="Served by" value="samad" />
       </div>
 
-      <table className="mt-1 w-full border-collapse text-left">
+      <table className="mt-1 w-full border-collapse border border-black text-center">
         <thead>
-          <tr className="border-y border-black">
-            <th className="py-0.5 pr-0.5 font-semibold">SL</th>
-            <th className="py-0.5 pr-0.5 font-semibold">Description</th>
-            <th className="py-0.5 text-right font-semibold">Sqty</th>
-            <th className="py-0.5 text-right font-semibold">MRP</th>
-            <th className="py-0.5 text-right font-semibold">D Amt</th>
-            <th className="py-0.5 text-right font-semibold">Amount</th>
+          <tr>
+            <th className={cell}>SL</th>
+            <th className={cell}>Description</th>
+            <th className={cell}>Sqty</th>
+            <th className={cell}>MRP</th>
+            <th className={cell}>D Amt</th>
+            <th className={cell}>Amount</th>
           </tr>
         </thead>
         <tbody>
           {sale.lines.map((line, index) => (
-            <tr key={line.id} className="align-top">
-              <td className="py-0.5 pr-0.5 tabular-nums">{index + 1}</td>
-              <td className="py-0.5 pr-0.5">{line.name}</td>
-              <td className="py-0.5 text-right tabular-nums">{line.qty}</td>
-              <td className="py-0.5 text-right tabular-nums">{money(line.price)}</td>
-              <td className="py-0.5 text-right tabular-nums">{money(lineDiscount(line))}</td>
-              <td className="py-0.5 text-right tabular-nums">{money(lineTotal(line))}</td>
+            <tr key={line.id}>
+              <td className={cell}>{index + 1}</td>
+              <td className={cell}>{line.name}</td>
+              <td className={cell}>{line.qty}</td>
+              <td className={cell}>{money(line.price)}</td>
+              <td className={cell}>{money(lineDiscount(line))}</td>
+              <td className={cell}>{money(lineTotal(line))}</td>
             </tr>
           ))}
+          <tr className="bg-gray-200 font-bold [print-color-adjust:exact]">
+            <td className={cell} colSpan={2}>Sub Total</td>
+            <td className={cell}>{itemQty}</td>
+            <td className={cell} colSpan={2} />
+            <td className={cell}>{money(itemAmount)}</td>
+          </tr>
         </tbody>
       </table>
-      <div className="grid grid-cols-[1.4rem_1fr_2rem_1fr] gap-1 border-y border-black bg-gray-200 px-0.5 py-0.5 font-bold [print-color-adjust:exact]">
-        <span />
-        <span>Sub Total:</span>
-        <span className="text-right tabular-nums">{itemQty}</span>
-        <span className="text-right tabular-nums">{money(itemAmount)}</span>
-      </div>
 
-      <div className="ml-auto mt-1 w-[48mm] space-y-0.5">
-        <div className="flex justify-between"><span>Discount</span><span className="tabular-nums">{money(sale.discount)}</span></div>
-        <div className="flex justify-between"><span>VAT</span><span className="tabular-nums">{money(sale.vat)}</span></div>
-        <div className="flex justify-between font-bold"><span>Net Amount</span><span className="tabular-nums">{money(sale.net)}</span></div>
-        <div className="flex justify-between"><span>Paid Amount</span><span className="tabular-nums">{money(sale.paid)}</span></div>
-        <div className="flex justify-between"><span>Change Amount</span><span className="tabular-nums">{money(sale.change)}</span></div>
+      <div className="mt-1 border border-black p-1">
+        <div className="flex justify-between"><span>Discount</span><span>{money(sale.discount)}</span></div>
+        <div className="flex justify-between"><span>VAT</span><span>{money(sale.vat)}</span></div>
+        <div className="flex justify-between font-bold"><span>Net Amount</span><span>{money(sale.net)}</span></div>
+        <div className="flex justify-between"><span>Paid Amount</span><span>{money(sale.paid)}</span></div>
+        <div className="flex justify-between"><span>Change Amount</span><span>{money(sale.change)}</span></div>
       </div>
       <p className="mt-1">Inword: {amountInWords(sale.net)}</p>
 
-      <table className="mt-1 w-full border-collapse border border-black">
+      <table className="mt-1 w-full border-collapse border border-black text-center">
         <thead>
-          <tr className="border-b border-black">
-            <th className="px-1 py-0.5 text-left font-semibold">DESCRIPTION</th>
-            <th className="px-1 py-0.5 text-right font-semibold">AMOUNT</th>
+          <tr>
+            <th className={cell}>DESCRIPTION</th>
+            <th className={cell}>AMOUNT</th>
           </tr>
         </thead>
         <tbody>
           {payments.length > 0 ? (
             payments.map((payment) => (
               <tr key={`${payment.method}-${payment.bankName ?? ''}`}>
-                <td className="border-t border-black px-1 py-0.5">{paymentLabel(payment)}</td>
-                <td className="border-t border-black px-1 py-0.5 text-right tabular-nums">{money(payment.amount)}</td>
+                <td className={cell}>{paymentLabel(payment)}</td>
+                <td className={cell}>{money(payment.amount)}</td>
               </tr>
             ))
           ) : (
             <tr>
-              <td className="px-1 py-0.5">CREDIT SALE</td>
-              <td className="px-1 py-0.5 text-right tabular-nums">{money(sale.net)}</td>
+              <td className={cell}>CREDIT SALE</td>
+              <td className={cell}>{money(sale.net)}</td>
             </tr>
           )}
         </tbody>
       </table>
 
       <div className="mt-1 border border-black p-1">
-        <div className="flex justify-between"><span>Previous Point</span><span className="tabular-nums">{previousPoint}</span></div>
-        <div className="flex justify-between"><span>Redeem Point</span><span className="tabular-nums">{redeemPoint}</span></div>
-        <div className="flex justify-between"><span>Earned Point</span><span className="tabular-nums">{earnedPoint}</span></div>
-        <div className="flex justify-between font-bold"><span>Curent Point</span><span className="tabular-nums">{currentPoint}</span></div>
+        <div className="flex justify-between"><span>Previous Point</span><span>{previousPoint}</span></div>
+        <div className="flex justify-between"><span>Redeem Point</span><span>{redeemPoint}</span></div>
+        <div className="flex justify-between"><span>Earned Point</span><span>{earnedPoint}</span></div>
+        <div className="flex justify-between font-bold"><span>Curent Point</span><span>{currentPoint}</span></div>
       </div>
 
       <ReceiptBarcode value={sale.invoiceNo} />
@@ -443,11 +452,11 @@ function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
         </p>
         {design.footerNote ? <p className="mt-1">{design.footerNote}</p> : null}
         {policies.length > 0 ? (
-          <ul className="mt-1 list-disc pl-4 text-left">
+          <div className="mt-1 text-left">
             {policies.map((line) => (
-              <li key={line}>{line}</li>
+              <p key={line}>* {line}</p>
             ))}
-          </ul>
+          </div>
         ) : null}
       </footer>
     </article>
