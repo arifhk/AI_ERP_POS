@@ -12,6 +12,13 @@ import { AppShell } from '../../components/AppShell';
 import type { CatalogProduct } from '../../components/ProductEditor';
 import { API_BASE, authHeaders } from '../../utils/api';
 import { decodeJwtPayload } from '../../utils/auth';
+import {
+  DEFAULT_INVOICE_SETTINGS,
+  fromInvoicePayload,
+  readInvoiceSettings,
+  writeInvoiceSettings,
+  type CompanyInvoiceSettings,
+} from '../../utils/invoiceSettings';
 import { fetchJson, useApi } from '../../utils/query';
 
 type CartLine = {
@@ -64,6 +71,7 @@ type SaleReceipt = {
   change: number;
   previousPoints: number;
   branch: ReceiptBranch;
+  design: CompanyInvoiceSettings;
 };
 
 type ReceiptBranch = {
@@ -322,10 +330,15 @@ function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
   const earnedPoint = Math.floor(Math.max(0, sale.net) / 100);
   const currentPoint = previousPoint - redeemPoint + earnedPoint;
   const payments = sale.payments.filter((payment) => payment.amount > 0);
+  const design = sale.design ?? DEFAULT_INVOICE_SETTINGS;
+  const policies = design.returnPolicy.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const paperWidth = design.paperSize === 'A4' ? 'w-[210mm]' : design.paperSize === 'A5' ? 'w-[148mm]' : 'w-[80mm]';
   return (
-    <article className="mx-auto w-[80mm] bg-white px-1 py-1 font-mono text-[10px] leading-tight text-black">
+    <article className={`mx-auto bg-white px-1 py-1 font-mono text-[10px] leading-tight text-black ${paperWidth}`}>
       <header className="text-center">
-        <p className="bg-black py-1 text-sm font-bold tracking-wide text-white [print-color-adjust:exact]">Plus Point</p>
+        {design.logoData ? <img src={design.logoData} alt="" className="mx-auto mb-1 h-10 w-10 object-contain" /> : null}
+        <p className="bg-black py-1 text-sm font-bold tracking-wide text-white [print-color-adjust:exact]">{design.companyName || 'Plus Point'}</p>
+        {design.headerNote ? <p className="mt-1">{design.headerNote}</p> : null}
         <p className="mt-1 text-xs">{sale.branch?.name || FALLBACK_BRANCH.name}</p>
         <p>{sale.branch?.address || FALLBACK_BRANCH.address}</p>
         <p>{sale.branch?.phone || FALLBACK_BRANCH.phone}</p>
@@ -338,7 +351,7 @@ function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
         <p>Invoice Date: {sale.issuedAt}</p>
         <p>Print Date: {printDate}</p>
         <div>
-          <p>VAT Reg.: —</p>
+          <p>VAT Reg.: {design.taxId || '—'}</p>
           <p className="font-bold">DUPLICATE-</p>
         </div>
       </div>
@@ -424,14 +437,18 @@ function ThermalReceipt({ sale }: { sale: SaleReceipt }) {
       <ReceiptBarcode value={sale.invoiceNo} />
 
       <footer className="mt-1 text-center">
-        <p>{sale.branch?.phone || FALLBACK_BRANCH.phone} · www.pluspoint.com.bd</p>
-        <ul className="mt-1 list-disc pl-4 text-left">
-          <li>Exchanges within 10 days.</li>
-          <li>No cash refunds.</li>
-          <li>Original tag is required.</li>
-          <li>No exchange on accessories or discounted items.</li>
-        </ul>
-        <p className="mt-1">System By: Mediasoft Data Systems Ltd. T: 55014045</p>
+        <p>
+          {sale.branch?.phone || FALLBACK_BRANCH.phone}
+          {design.website ? ` · ${design.website}` : ''}
+        </p>
+        {design.footerNote ? <p className="mt-1">{design.footerNote}</p> : null}
+        {policies.length > 0 ? (
+          <ul className="mt-1 list-disc pl-4 text-left">
+            {policies.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : null}
       </footer>
     </article>
   );
@@ -464,6 +481,7 @@ export default function PosPage() {
   const [dob, setDob] = useState('');
   const [age, setAge] = useState('');
   const [activeBranch, setActiveBranch] = useState<ReceiptBranch>(FALLBACK_BRANCH);
+  const [invoiceDesign, setInvoiceDesign] = useState<CompanyInvoiceSettings>(DEFAULT_INVOICE_SETTINGS);
   const [discountPercent, setDiscountPercent] = useState('0');
   const [flatDiscountAmount, setFlatDiscountAmount] = useState('0.00');
   const [returnAmount, setReturnAmount] = useState(0);
@@ -525,6 +543,34 @@ export default function PosPage() {
       } catch {
         if (!cancelled && !cached) {
           setActiveBranch(FALLBACK_BRANCH);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const cached = readInvoiceSettings();
+    setInvoiceDesign(cached);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/settings/invoice`, { headers: authHeaders(), cache: 'no-store' });
+        if (!response.ok || cancelled) {
+          return;
+        }
+        const payload = (await response.json()) as Parameters<typeof fromInvoicePayload>[0];
+        if (!payload.configured || cancelled) {
+          return;
+        }
+        const next = fromInvoicePayload(payload);
+        setInvoiceDesign(next);
+        writeInvoiceSettings(next);
+      } catch {
+        if (!cancelled) {
+          setInvoiceDesign(cached);
         }
       }
     })();
@@ -1078,6 +1124,7 @@ export default function PosPage() {
           change,
           previousPoints: loyaltyPoints,
           branch: activeBranch,
+          design: invoiceDesign,
         });
       });
       window.setTimeout(() => window.print(), 50);
@@ -1911,7 +1958,7 @@ export default function PosPage() {
     </div>
     {receipt
       ? createPortal(
-          <div className="print-only">
+          <div className={`print-only ${receipt.design?.paperSize === 'A4' ? 'print-a4' : receipt.design?.paperSize === 'A5' ? 'print-a5' : 'print-80mm'}`}>
             <ThermalReceipt sale={receipt} />
           </div>,
           document.body,

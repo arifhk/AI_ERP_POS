@@ -4,29 +4,18 @@ import { useEffect, useState, type DragEvent, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { AppShell } from '../../components/AppShell';
+import { API_BASE, authHeaders } from '../../utils/api';
 import { canManageCompany, getStoredRole } from '../../utils/auth';
-
-const PAPER_SIZES = ['80mm POS', 'A4', 'A5'] as const;
-
-type PaperSize = (typeof PAPER_SIZES)[number];
-
-type CompanyForm = {
-  name: string;
-  address: string;
-  phone: string;
-  email: string;
-  website: string;
-  taxId: string;
-};
-
-const emptyCompany: CompanyForm = {
-  name: '',
-  address: '',
-  phone: '',
-  email: '',
-  website: '',
-  taxId: '',
-};
+import {
+  DEFAULT_INVOICE_SETTINGS,
+  PAPER_SIZES,
+  fromInvoicePayload,
+  readInvoiceSettings,
+  toInvoicePayload,
+  writeInvoiceSettings,
+  type CompanyInvoiceSettings,
+  type PaperSize,
+} from '../../utils/invoiceSettings';
 
 const fieldClass =
   'mt-1 min-h-[44px] w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500';
@@ -35,16 +24,12 @@ export default function CompanySetupPage() {
   const router = useRouter();
   const [allowed, setAllowed] = useState(false);
   const [tab, setTab] = useState<'details' | 'design'>('details');
-  const [company, setCompany] = useState<CompanyForm>(emptyCompany);
+  const [settings, setSettings] = useState<CompanyInvoiceSettings>(DEFAULT_INVOICE_SETTINGS);
   const [logoName, setLogoName] = useState('');
-  const [logoUrl, setLogoUrl] = useState('');
   const [saving, setSaving] = useState(false);
-  const [paperSize, setPaperSize] = useState<PaperSize>('80mm POS');
-  const [headerNote, setHeaderNote] = useState('');
-  const [footerNote, setFooterNote] = useState('Thank you for shopping with us.');
-  const [returnPolicy, setReturnPolicy] = useState('Returns accepted within 3 days with the original invoice.');
   const [referenceName, setReferenceName] = useState('');
   const [referenceUrl, setReferenceUrl] = useState('');
+  const [referenceIsPdf, setReferenceIsPdf] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
@@ -55,26 +40,65 @@ export default function CompanySetupPage() {
       return;
     }
     setAllowed(true);
+    const cached = readInvoiceSettings();
+    setSettings(cached);
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/settings/invoice`, { headers: authHeaders(), cache: 'no-store' });
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as Parameters<typeof fromInvoicePayload>[0];
+        if (!payload.configured) {
+          return;
+        }
+        const next = fromInvoicePayload(payload);
+        setSettings(next);
+        writeInvoiceSettings(next);
+      } catch {
+        setSettings(cached);
+      }
+    })();
   }, [router]);
 
-  function setField(key: keyof CompanyForm, value: string) {
-    setCompany((current) => ({ ...current, [key]: value }));
+  function patchSettings(partial: Partial<CompanyInvoiceSettings>) {
+    setSettings((current) => ({ ...current, ...partial }));
   }
 
   function takeLogo(file: File | undefined) {
     if (!file) {
       return;
     }
-    setLogoName(file.name);
-    setLogoUrl(URL.createObjectURL(file));
+    if (!file.type.startsWith('image/')) {
+      toast.error('The logo must be an image.');
+      return;
+    }
+    if (file.size > 500_000) {
+      toast.error('Logo is too large. Use an image under 500 KB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = typeof reader.result === 'string' ? reader.result : '';
+      setLogoName(file.name);
+      patchSettings({ logoData: data });
+    };
+    reader.readAsDataURL(file);
   }
 
   function takeReference(file: File | undefined) {
     if (!file) {
       return;
     }
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImage = file.type.startsWith('image/');
+    if (!isPdf && !isImage) {
+      toast.error('Upload an image or a PDF.');
+      return;
+    }
     setReferenceName(file.name);
-    setReferenceUrl(URL.createObjectURL(file));
+    setReferenceIsPdf(isPdf);
+    setReferenceUrl(isImage ? URL.createObjectURL(file) : '');
     setPreviewReady(false);
   }
 
@@ -84,12 +108,36 @@ export default function CompanySetupPage() {
     takeReference(event.dataTransfer.files?.[0]);
   }
 
-  async function saveCompany(event: FormEvent) {
-    event.preventDefault();
+  async function persistSettings() {
+    const next = { ...settings, companyName: settings.companyName.trim() || DEFAULT_INVOICE_SETTINGS.companyName };
+    writeInvoiceSettings(next);
+    setSettings(next);
+    const response = await fetch(`${API_BASE}/settings/invoice`, {
+      method: 'PUT',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(toInvoicePayload(next)),
+    });
+    if (!response.ok) {
+      const failed = (await response.json().catch(() => null)) as { detail?: string } | null;
+      throw new Error(failed?.detail || 'Saved on this register. The company record could not be updated.');
+    }
+    const payload = (await response.json()) as Parameters<typeof fromInvoicePayload>[0];
+    const saved = fromInvoicePayload(payload);
+    writeInvoiceSettings(saved);
+    setSettings(saved);
+  }
+
+  async function saveCompany(event?: FormEvent) {
+    event?.preventDefault();
     setSaving(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 400));
-    setSaving(false);
-    toast.success('Company details saved.');
+    try {
+      await persistSettings();
+      toast.success('Invoice design saved.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save the invoice design.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleAIGenerate() {
@@ -101,14 +149,14 @@ export default function CompanySetupPage() {
     await new Promise((resolve) => window.setTimeout(resolve, 1400));
     setGenerating(false);
     setPreviewReady(true);
-    toast.success('Invoice template generated based on reference image!');
+    toast.success('Invoice template generated based on the reference file!');
   }
 
   if (!allowed) {
     return null;
   }
 
-  const previewWidth = paperSize === '80mm POS' ? 'max-w-[80mm]' : paperSize === 'A5' ? 'max-w-sm' : 'max-w-lg';
+  const previewWidth = settings.paperSize === '80mm POS' ? 'max-w-[80mm]' : settings.paperSize === 'A5' ? 'max-w-sm' : 'max-w-lg';
 
   return (
     <AppShell active="company-setup">
@@ -139,7 +187,7 @@ export default function CompanySetupPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200 md:col-span-2">
               Company Name
-              <input required value={company.name} onChange={(event) => setField('name', event.target.value)} className={fieldClass} placeholder="Bashundhara City" />
+              <input required value={settings.companyName} onChange={(event) => patchSettings({ companyName: event.target.value })} className={fieldClass} placeholder="Plus Point" />
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200 md:col-span-2">
               Logo Upload
@@ -149,27 +197,28 @@ export default function CompanySetupPage() {
                 onChange={(event) => takeLogo(event.target.files?.[0])}
                 className="mt-1 block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-indigo-700"
               />
-              {logoUrl ? <img src={logoUrl} alt="Company logo" className="mt-3 h-16 w-16 rounded-md border border-gray-200 object-contain" /> : null}
+              {settings.logoData ? <img src={settings.logoData} alt="Company logo" className="mt-3 h-16 w-16 rounded-md border border-gray-200 object-contain" /> : null}
+              {logoName ? <span className="mt-1 block text-xs text-slate-500">{logoName}</span> : null}
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200 md:col-span-2">
               Address
-              <textarea required value={company.address} onChange={(event) => setField('address', event.target.value)} rows={3} className={fieldClass} placeholder="Bashundhara, Dhaka" />
+              <textarea value={settings.address} onChange={(event) => patchSettings({ address: event.target.value })} rows={3} className={fieldClass} placeholder="Registered office. The receipt prints the billing branch address." />
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
               Phone
-              <input required value={company.phone} onChange={(event) => setField('phone', event.target.value)} className={fieldClass} placeholder="01XXXXXXXXX" />
+              <input value={settings.phone} onChange={(event) => patchSettings({ phone: event.target.value })} className={fieldClass} placeholder="01XXXXXXXXX" />
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
               Email
-              <input required type="email" value={company.email} onChange={(event) => setField('email', event.target.value)} className={fieldClass} placeholder="billing@company.com" />
+              <input type="email" value={settings.email} onChange={(event) => patchSettings({ email: event.target.value })} className={fieldClass} placeholder="billing@company.com" />
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
               Website
-              <input value={company.website} onChange={(event) => setField('website', event.target.value)} className={fieldClass} placeholder="https://company.com" />
+              <input value={settings.website} onChange={(event) => patchSettings({ website: event.target.value })} className={fieldClass} placeholder="https://company.com" />
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
               BIN/VAT/TIN No
-              <input value={company.taxId} onChange={(event) => setField('taxId', event.target.value)} className={fieldClass} placeholder="BIN 123456789" />
+              <input value={settings.taxId} onChange={(event) => patchSettings({ taxId: event.target.value })} className={fieldClass} placeholder="BIN 123456789" />
             </label>
           </div>
           <div className="mt-6 flex justify-end">
@@ -184,9 +233,9 @@ export default function CompanySetupPage() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Paper Size
               <select
-                value={paperSize}
+                value={settings.paperSize}
                 disabled={generating}
-                onChange={(event) => setPaperSize(event.target.value as PaperSize)}
+                onChange={(event) => patchSettings({ paperSize: event.target.value as PaperSize })}
                 className={fieldClass}
               >
                 {PAPER_SIZES.map((size) => (
@@ -198,19 +247,19 @@ export default function CompanySetupPage() {
             </label>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Header
-              <textarea value={headerNote} disabled={generating} onChange={(event) => setHeaderNote(event.target.value)} rows={3} className={fieldClass} placeholder="Welcome message printed under the store name" />
+              <textarea value={settings.headerNote} disabled={generating} onChange={(event) => patchSettings({ headerNote: event.target.value })} rows={3} className={fieldClass} placeholder="Welcome message printed under the company name" />
             </label>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Footer
-              <textarea value={footerNote} disabled={generating} onChange={(event) => setFooterNote(event.target.value)} rows={3} className={fieldClass} />
+              <textarea value={settings.footerNote} disabled={generating} onChange={(event) => patchSettings({ footerNote: event.target.value })} rows={3} className={fieldClass} />
             </label>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Return Policies
-              <textarea value={returnPolicy} disabled={generating} onChange={(event) => setReturnPolicy(event.target.value)} rows={3} className={fieldClass} />
+              <textarea value={settings.returnPolicy} disabled={generating} onChange={(event) => patchSettings({ returnPolicy: event.target.value })} rows={3} className={fieldClass} />
             </label>
 
             <div>
-              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Upload Reference Invoice for AI Design</p>
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Upload Reference Invoice (Image or PDF)</p>
               <label
                 onDragOver={(event) => {
                   event.preventDefault();
@@ -224,14 +273,15 @@ export default function CompanySetupPage() {
               >
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,application/pdf"
                   disabled={generating}
                   className="sr-only"
                   onChange={(event) => takeReference(event.target.files?.[0])}
                 />
-                <span className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">Drop an invoice image here, or click to browse</span>
-                <span className="mt-1 text-xs text-slate-500">{referenceName || 'PNG or JPG of a sample invoice'}</span>
-                {referenceUrl ? <img src={referenceUrl} alt="Reference invoice" className="mt-4 max-h-28 rounded-md border border-gray-200 object-contain" /> : null}
+                <span className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">Upload Reference Invoice (Image or PDF)</span>
+                <span className="mt-1 text-xs text-slate-500">{referenceName || 'PNG, JPG, or PDF of a sample invoice'}</span>
+                {referenceIsPdf && referenceName ? <span className="mt-4 rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">PDF ready: {referenceName}</span> : null}
+                {referenceUrl && !referenceIsPdf ? <img src={referenceUrl} alt="Reference invoice" className="mt-4 max-h-28 rounded-md border border-gray-200 object-contain" /> : null}
               </label>
               <button
                 type="button"
@@ -242,6 +292,14 @@ export default function CompanySetupPage() {
                 {generating ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : null}
                 {generating ? 'Generating...' : 'Generate Template matching this image'}
               </button>
+              <button
+                type="button"
+                onClick={() => void saveCompany()}
+                disabled={saving || generating}
+                className="mt-3 ml-2 inline-flex min-h-[44px] items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {saving ? 'Saving...' : 'Save Design'}
+              </button>
             </div>
           </div>
 
@@ -249,13 +307,13 @@ export default function CompanySetupPage() {
             <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Preview</h2>
             {previewReady ? (
               <article className={`mx-auto mt-4 bg-white p-4 text-center font-mono text-[12px] leading-tight text-black shadow-inner ring-1 ring-slate-200 ${previewWidth}`}>
-                {logoUrl ? <img src={logoUrl} alt="" className="mx-auto mb-2 h-10 w-10 object-contain" /> : null}
-                <p className="text-sm font-bold">{company.name || 'Company Name'}</p>
-                <p>{company.address || 'Address'}</p>
-                <p>{[company.phone, company.email].filter(Boolean).join(' · ') || 'Phone · Email'}</p>
-                {company.website ? <p>{company.website}</p> : null}
-                {company.taxId ? <p>{company.taxId}</p> : null}
-                {headerNote ? <p className="mt-2">{headerNote}</p> : null}
+                {settings.logoData ? <img src={settings.logoData} alt="" className="mx-auto mb-2 h-10 w-10 object-contain" /> : null}
+                <p className="text-sm font-bold">{settings.companyName || 'Company Name'}</p>
+                <p className="font-semibold">Branch name</p>
+                <p>Branch address</p>
+                <p>Branch phone</p>
+                {settings.taxId ? <p>VAT Reg.: {settings.taxId}</p> : null}
+                {settings.headerNote ? <p className="mt-2">{settings.headerNote}</p> : null}
                 <table className="mt-2 w-full border-collapse border-t border-dashed border-black text-left">
                   <thead>
                     <tr className="border-b border-black">
@@ -277,9 +335,10 @@ export default function CompanySetupPage() {
                   <div className="flex justify-between"><span>Paid Amount</span><span>500.00</span></div>
                   <div className="flex justify-between"><span>Change Amount</span><span>0.00</span></div>
                 </div>
-                {footerNote ? <p className="mt-2">{footerNote}</p> : null}
-                {returnPolicy ? <p className="mt-1 text-left">{returnPolicy}</p> : null}
-                <p className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">{paperSize}</p>
+                {settings.footerNote ? <p className="mt-2">{settings.footerNote}</p> : null}
+                {settings.returnPolicy ? <p className="mt-1 whitespace-pre-line text-left">{settings.returnPolicy}</p> : null}
+                {settings.website ? <p className="mt-1">{settings.website}</p> : null}
+                <p className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">{settings.paperSize}</p>
               </article>
             ) : (
               <p className="mt-6 text-sm text-slate-500">Upload a reference invoice and generate a template to preview it here.</p>

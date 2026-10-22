@@ -108,6 +108,14 @@ body {
     background: #fff;
   }
 
+  .print-only.print-a4 {
+    width: 210mm !important;
+  }
+
+  .print-only.print-a5 {
+    width: 148mm !important;
+  }
+
   html,
   body {
     margin: 0 !important;

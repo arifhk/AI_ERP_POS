@@ -311,6 +311,25 @@ class SystemSetting(SQLModel, table=True):
     value: str = Field(default="", max_length=40)
 
 
+class CompanyInvoiceSetting(SQLModel, table=True):
+    """Invoice header, logo, and terms configured in Company Setup."""
+
+    __tablename__ = "company_invoice_settings"
+
+    tenant_id: int = Field(primary_key=True, foreign_key="tenants.id")
+    company_name: str = Field(default="", max_length=255)
+    logo_data: str = Field(default="", sa_column=Column(Text, nullable=False))
+    address: str = Field(default="", max_length=500)
+    phone: str = Field(default="", max_length=50)
+    email: str = Field(default="", max_length=255)
+    website: str = Field(default="", max_length=255)
+    tax_id: str = Field(default="", max_length=80)
+    paper_size: str = Field(default="80mm POS", max_length=20)
+    header_note: str = Field(default="", sa_column=Column(Text, nullable=False))
+    footer_note: str = Field(default="", sa_column=Column(Text, nullable=False))
+    return_policy: str = Field(default="", sa_column=Column(Text, nullable=False))
+
+
 class Order(SQLModel, table=True):
     """POS sale header scoped to a tenant branch."""
 
