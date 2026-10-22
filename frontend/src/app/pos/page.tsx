@@ -5,6 +5,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { toast } from 'sonner';
 import { PosCameraScanner } from '../../components/PosCameraScanner';
 import { AddCustomerModal, type NewCustomerForm } from '../../components/pos/AddCustomerModal';
+import { RecallInvoiceModal, type HeldInvoice } from '../../components/pos/RecallInvoiceModal';
 import { ReprintModal } from '../../components/pos/ReprintModal';
 import { SearchCustomerModal, type PosCustomerRow } from '../../components/pos/SearchCustomerModal';
 import { AppShell } from '../../components/AppShell';
@@ -71,6 +72,23 @@ type CustomerHit = {
 };
 
 const CATALOG_PAGE = `${API_BASE}/products/table?page=1&page_size=100&status=active`;
+const HELD_INVOICES_KEY = 'pos_held_invoices';
+
+function readHeldInvoices(): HeldInvoice[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HELD_INVOICES_KEY) || '[]') as unknown;
+    return Array.isArray(parsed) ? (parsed as HeldInvoice[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeHeldInvoices(invoices: HeldInvoice[]) {
+  localStorage.setItem(HELD_INVOICES_KEY, JSON.stringify(invoices));
+}
 
 const DEFAULT_PAYMENT_METHODS = ['Cash', 'BKASH', 'NAGAD', 'Card'];
 
@@ -258,7 +276,8 @@ export default function PosPage() {
   const [scanNotice, setScanNotice] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [held, setHeld] = useState<CartLine[] | null>(null);
+  const [heldInvoices, setHeldInvoices] = useState<HeldInvoice[]>([]);
+  const [isRecallOpen, setIsRecallOpen] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [customerMobile, setCustomerMobile] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -296,6 +315,10 @@ export default function PosPage() {
   const [clock, setClock] = useState('11 Oct 2026');
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
   const { data: firstPage, error: catalogError } = useApi<ProductTable>(CATALOG_PAGE);
+
+  useEffect(() => {
+    setHeldInvoices(readHeldInvoices());
+  }, []);
 
   useEffect(() => {
     if (!firstPage) {
@@ -499,20 +522,51 @@ export default function PosPage() {
     }
   }
 
+  function clearActiveSale() {
+    latestIdRef.current = null;
+    setCart([]);
+    setSelectedId(null);
+    setScanCode('');
+    setScanNotice(null);
+    setCustomerMobile('');
+    setCustomerName('');
+    setCustomerAddress('');
+    setCustomerCode('');
+    setCustomerId(null);
+    setOrderDiscountPercent('0');
+    setOrderDiscountAmount('0.00');
+    discountEditRef.current = 'percent';
+    setReturnAmount(0);
+    focusBarcode();
+  }
+
   function holdInvoice() {
-    if (cart.length === 0 && held) {
-      setCart(held);
-      setHeld(null);
-      setStatus('Held invoice restored.');
-      return;
-    }
     if (cart.length === 0) {
       return;
     }
-    setHeld(cart);
-    setCart([]);
-    setSelectedId(null);
-    setStatus('Invoice held.');
+    const entry: HeldInvoice = {
+      id: `H${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      itemCount: cart.reduce((sum, line) => sum + line.qty, 0),
+      totalAmount: totals.net,
+      cart: cart.map((line) => ({ ...line })),
+      customer: {
+        id: customerId,
+        code: customerCode,
+        name: customerName,
+        phone: customerMobile,
+        address: customerAddress,
+      },
+      orderDiscountPercent,
+      orderDiscountAmount,
+      returnAmount,
+    };
+    const next = [entry, ...heldInvoices];
+    setHeldInvoices(next);
+    writeHeldInvoices(next);
+    clearActiveSale();
+    setStatus(null);
+    toast.success('Invoice put on hold');
   }
 
   function cancelInvoice() {
@@ -823,15 +877,36 @@ export default function PosPage() {
   }
 
   function recallInvoice() {
-    console.log('Recall invoice', held);
-    if (!held || held.length === 0) {
-      setStatus('No held invoice to recall.');
-      return;
-    }
-    setCart(held);
-    setHeld(null);
-    latestIdRef.current = held[held.length - 1]?.id ?? null;
-    setStatus('Held invoice recalled.');
+    setHeldInvoices(readHeldInvoices());
+    setIsRecallOpen(true);
+  }
+
+  function restoreHeldInvoice(invoice: HeldInvoice) {
+    const next = heldInvoices.filter((item) => item.id !== invoice.id);
+    setHeldInvoices(next);
+    writeHeldInvoices(next);
+    const customer = invoice.customer ?? { id: null, code: '', name: '', phone: '', address: '' };
+    setCart(invoice.cart.map((line) => ({ ...line })));
+    setSelectedId(invoice.cart[invoice.cart.length - 1]?.id ?? null);
+    latestIdRef.current = invoice.cart[invoice.cart.length - 1]?.id ?? null;
+    setCustomerId(customer.id);
+    setCustomerCode(customer.code);
+    setCustomerName(customer.name);
+    setCustomerMobile(customer.phone);
+    setCustomerAddress(customer.address);
+    setOrderDiscountPercent(invoice.orderDiscountPercent || '0');
+    setOrderDiscountAmount(invoice.orderDiscountAmount || '0.00');
+    discountEditRef.current = 'percent';
+    setReturnAmount(invoice.returnAmount || 0);
+    setIsRecallOpen(false);
+    setStatus(null);
+    focusBarcode();
+  }
+
+  function deleteHeldInvoice(id: string) {
+    const next = heldInvoices.filter((invoice) => invoice.id !== id);
+    setHeldInvoices(next);
+    writeHeldInvoices(next);
   }
 
   function returnSale() {
@@ -861,7 +936,7 @@ export default function PosPage() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (payOpen || cameraOpen || isAddCustomerOpen || isSearchCustomerOpen || isReprintOpen) {
+      if (payOpen || cameraOpen || isAddCustomerOpen || isSearchCustomerOpen || isReprintOpen || isRecallOpen) {
         return;
       }
       if (event.key === 'F2') {
@@ -1156,7 +1231,11 @@ export default function PosPage() {
               </button>
             </div>
 
-            {held ? <p className="text-xs font-medium text-amber-700">One invoice is on hold. Press F7 to recall it.</p> : null}
+            {heldInvoices.length > 0 ? (
+              <p className="text-xs font-medium text-amber-700">
+                {heldInvoices.length} invoice{heldInvoices.length === 1 ? '' : 's'} on hold. Press F7 to recall.
+              </p>
+            ) : null}
             {status && cart.length > 0 ? <p className="text-xs font-medium text-slate-500">{status}</p> : null}
 
             <div className="space-y-1">
@@ -1236,6 +1315,14 @@ export default function PosPage() {
         <SearchCustomerModal extraRows={directory} onClose={() => setIsSearchCustomerOpen(false)} onSelect={applyCustomer} />
       ) : null}
       {isReprintOpen ? <ReprintModal onClose={() => setIsReprintOpen(false)} onReprint={reprintInvoice} /> : null}
+      {isRecallOpen ? (
+        <RecallInvoiceModal
+          invoices={heldInvoices}
+          onClose={() => setIsRecallOpen(false)}
+          onRestore={restoreHeldInvoice}
+          onDelete={deleteHeldInvoice}
+        />
+      ) : null}
 
       {payOpen ? (
         <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-3 sm:items-center" role="presentation">
