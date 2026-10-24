@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
 import { PosCameraScanner } from '../../components/PosCameraScanner';
 import { AddCustomerModal, type NewCustomerForm } from '../../components/pos/AddCustomerModal';
@@ -10,6 +11,7 @@ import { ReprintModal } from '../../components/pos/ReprintModal';
 import { SEED as CUSTOMER_SEED, SearchCustomerModal, type PosCustomerRow } from '../../components/pos/SearchCustomerModal';
 import { AppShell } from '../../components/AppShell';
 import type { CatalogProduct } from '../../components/ProductEditor';
+import { db, type CachedProduct } from '../../lib/db';
 import { API_BASE, authHeaders } from '../../utils/api';
 import { decodeJwtPayload } from '../../utils/auth';
 import {
@@ -19,7 +21,7 @@ import {
   writeInvoiceSettings,
   type CompanyInvoiceSettings,
 } from '../../utils/invoiceSettings';
-import { fetchJson, useApi } from '../../utils/query';
+import { fetchJson } from '../../utils/query';
 
 type CartLine = {
   id: string;
@@ -110,7 +112,6 @@ function readStoredBranch(): ReceiptBranch | null {
   }
 }
 
-const CATALOG_PAGE = `${API_BASE}/products/table?page=1&page_size=100&status=active`;
 const HELD_INVOICES_KEY = 'pos_held_invoices';
 
 function readHeldInvoices(): HeldInvoice[] {
@@ -169,19 +170,35 @@ function sellable(id: string, barcode: string, name: string, price: number, vat:
   return { id, barcode, name, price, vat };
 }
 
-function indexCatalog(products: CatalogProduct[]) {
-  const map = new Map<string, Sellable>();
+const CACHE_KEY_SEPARATOR = '\u001f';
+
+function catalogRows(products: CatalogProduct[]): CachedProduct[] {
+  const rows: CachedProduct[] = [];
+  const seen = new Set<string>();
+
+  const add = (cartId: string, code: string | null | undefined, name: string, price: number, stock: number, vat: number) => {
+    const barcode = code?.trim();
+    if (!barcode) {
+      return;
+    }
+    const id = `${cartId}${CACHE_KEY_SEPARATOR}${barcode.toLowerCase()}`;
+    if (seen.has(id)) {
+      return;
+    }
+    seen.add(id);
+    rows.push({ id, barcode, name, price, stock, vat });
+  };
+
   for (const product of products) {
     if (!product.is_active || product.is_hidden) {
       continue;
     }
-    const parent = sellable(`p-${product.id}`, product.item_code || product.barcode, product.name, product.price, product.sale_vat ?? 0);
+    const cartId = `p-${product.id}`;
+    const vat = product.sale_vat ?? 0;
+    const stock = product.stock_quantity ?? 0;
     const codes = [product.barcode, product.item_code, product.design_code, ...(product.additional_barcodes ?? [])];
     for (const code of codes) {
-      const key = code?.trim().toLowerCase();
-      if (key) {
-        map.set(key, parent);
-      }
+      add(cartId, code, product.name, product.price, stock, vat);
     }
     for (const variant of product.variants ?? []) {
       const sku = variant.sku?.trim();
@@ -189,19 +206,37 @@ function indexCatalog(products: CatalogProduct[]) {
         continue;
       }
       const label = Object.values(variant.attributes ?? {}).filter(Boolean).join(' / ');
-      map.set(
-        sku.toLowerCase(),
-        sellable(
-          variant.id ? `v-${variant.id}` : `v-${sku}`,
-          sku,
-          label ? `${product.name} (${label})` : product.name,
-          variant.effective_price ?? product.price,
-          variant.sale_vat ?? product.sale_vat ?? 0,
-        ),
+      add(
+        variant.id ? `v-${variant.id}` : `v-${sku}`,
+        sku,
+        label ? `${product.name} (${label})` : product.name,
+        variant.effective_price ?? product.price,
+        variant.stock_quantity ?? 0,
+        variant.sale_vat ?? product.sale_vat ?? 0,
       );
     }
   }
-  return map;
+  return rows;
+}
+
+function sellableFromCache(row: CachedProduct): Sellable {
+  const marker = row.id.indexOf(CACHE_KEY_SEPARATOR);
+  const id = marker === -1 ? row.id : row.id.slice(0, marker);
+  return sellable(id, row.barcode, row.name, row.price, row.vat);
+}
+
+async function fetchActiveCatalog() {
+  const payload = await fetchJson<ProductTable>('/api/products');
+  return payload.items ?? [];
+}
+
+async function replaceProductCache(products: CatalogProduct[]) {
+  const rows = catalogRows(products);
+  await db.transaction('rw', db.products, async () => {
+    await db.products.clear();
+    await db.products.bulkPut(rows);
+  });
+  return rows.length;
 }
 
 function phoneDigits(value: string) {
@@ -514,8 +549,16 @@ export default function PosPage() {
   paymentMethodsRef.current = paymentMethods;
   const [receipt, setReceipt] = useState<SaleReceipt | null>(null);
   const [clock, setClock] = useState('11 Oct 2026');
-  const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
-  const { data: firstPage, error: catalogError } = useApi<ProductTable>(CATALOG_PAGE);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncGeneration = useRef(0);
+  const cachedCount = useLiveQuery(async () => {
+    try {
+      return await db.products.count();
+    } catch {
+      return 0;
+    }
+  }, [], 0);
 
   useEffect(() => {
     setHeldInvoices(readHeldInvoices());
@@ -595,33 +638,45 @@ export default function PosPage() {
     }
   }, [dob]);
 
-  useEffect(() => {
-    if (!firstPage) {
-      return;
-    }
-    const firstItems = firstPage.items ?? [];
-    setCatalog(firstItems);
-    const pages = firstPage.pages ?? 1;
-    if (pages <= 1) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const items = [...firstItems];
-      for (let page = 2; page <= pages; page += 1) {
-        const next = await fetchJson<ProductTable>(`${API_BASE}/products/table?page=${page}&page_size=100&status=active`);
-        items.push(...(next.items ?? []));
+  const syncCatalog = useCallback(async (announce: boolean) => {
+    const generation = syncGeneration.current + 1;
+    syncGeneration.current = generation;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const items = await fetchActiveCatalog();
+      if (syncGeneration.current !== generation) {
+        return;
       }
-      if (!cancelled) {
-        setCatalog(items);
+      const count = await replaceProductCache(items);
+      if (syncGeneration.current !== generation) {
+        return;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [firstPage]);
+      if (announce) {
+        toast.success(`Synced ${count.toLocaleString()} product codes`);
+      }
+    } catch {
+      if (syncGeneration.current !== generation) {
+        return;
+      }
+      const message = 'Unable to sync products from the server. Saved items stay available offline.';
+      setSyncError(message);
+      if (announce) {
+        toast.error(message);
+      }
+    } finally {
+      if (syncGeneration.current === generation) {
+        setSyncing(false);
+      }
+    }
+  }, []);
 
-  const productIndex = useMemo(() => indexCatalog(catalog), [catalog]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void syncCatalog(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [syncCatalog]);
 
   useEffect(() => {
     const formatted = new Date().toLocaleString('en-GB', {
@@ -693,25 +748,28 @@ export default function PosPage() {
     });
   }
 
-  function submitScan(code: string) {
-    const term = code.trim().toLowerCase();
-    if (!term) {
+  async function submitScan(code: string) {
+    const scannedCode = code.trim();
+    if (!scannedCode) {
       return;
     }
-    if (!firstPage && !catalogError) {
-      setScanNotice('Products are still loading.');
-      return;
+    try {
+      const product =
+        (await db.products.where('barcode').equals(scannedCode).first()) ??
+        (await db.products.where('barcode').equalsIgnoreCase(scannedCode).first());
+      if (!product) {
+        const cached = await db.products.count();
+        setScanNotice(cached === 0 ? 'Sync products before scanning.' : 'No item matches that code.');
+        return;
+      }
+      addProduct(sellableFromCache(product));
+      setScanCode('');
+      setScanNotice(null);
+      setCameraOpen(false);
+      focusBarcode();
+    } catch {
+      setScanNotice('Unable to read the saved product catalog.');
     }
-    const product = productIndex.get(term);
-    if (!product) {
-      setScanNotice(catalogError ? 'Unable to load products from the server.' : 'No item matches that code.');
-      return;
-    }
-    addProduct(product);
-    setScanCode('');
-    setScanNotice(null);
-    setCameraOpen(false);
-    focusBarcode();
   }
 
   function resolveCustomer(phone: string) {
@@ -1309,15 +1367,28 @@ export default function PosPage() {
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
           <div>
             <p className="text-base font-semibold text-slate-900 dark:text-slate-100">Bashundhara City</p>
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Terminal 01 · {clock}</p>
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              Terminal 01 · {clock} · {cachedCount.toLocaleString()} cached
+            </p>
+            {syncError ? <p className="text-xs font-medium text-rose-600">{syncError}</p> : null}
           </div>
-          <button
-            type="button"
-            onClick={() => setIsReprintOpen(true)}
-            className="min-h-[44px] rounded-md bg-orange-500 px-4 text-sm font-bold text-white active:bg-orange-600"
-          >
-            Reprint
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void syncCatalog(true)}
+              disabled={syncing}
+              className="min-h-[44px] rounded-md border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 active:bg-slate-100 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+            >
+              {syncing ? 'Syncing…' : 'Sync Products'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsReprintOpen(true)}
+              className="min-h-[44px] rounded-md bg-orange-500 px-4 text-sm font-bold text-white active:bg-orange-600"
+            >
+              Reprint
+            </button>
+          </div>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
