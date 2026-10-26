@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
 import { PosCameraScanner } from '../../components/PosCameraScanner';
 import { AddCustomerModal, type NewCustomerForm } from '../../components/pos/AddCustomerModal';
@@ -10,7 +11,7 @@ import { ReprintModal } from '../../components/pos/ReprintModal';
 import { SEED as CUSTOMER_SEED, SearchCustomerModal, type PosCustomerRow } from '../../components/pos/SearchCustomerModal';
 import { AppShell } from '../../components/AppShell';
 import type { CatalogProduct } from '../../components/ProductEditor';
-import { db, replaceLocalProducts, sanitizeBarcode, type LocalProduct } from '../../lib/db';
+import { db, type CachedProduct } from '../../lib/db';
 import { API_BASE, authHeaders } from '../../utils/api';
 import { decodeJwtPayload } from '../../utils/auth';
 import {
@@ -20,7 +21,7 @@ import {
   writeInvoiceSettings,
   type CompanyInvoiceSettings,
 } from '../../utils/invoiceSettings';
-import { fetchJson, useApi } from '../../utils/query';
+import { fetchJson } from '../../utils/query';
 
 type CartLine = {
   id: string;
@@ -111,7 +112,6 @@ function readStoredBranch(): ReceiptBranch | null {
   }
 }
 
-const CATALOG_PAGE = `${API_BASE}/products/table?page=1&page_size=100&status=active`;
 const HELD_INVOICES_KEY = 'pos_held_invoices';
 
 function readHeldInvoices(): HeldInvoice[] {
@@ -170,19 +170,35 @@ function sellable(id: string, barcode: string, name: string, price: number, vat:
   return { id, barcode, name, price, vat };
 }
 
-function indexCatalog(products: CatalogProduct[]) {
-  const map = new Map<string, Sellable>();
+const CACHE_KEY_SEPARATOR = '\u001f';
+
+function catalogRows(products: CatalogProduct[]): CachedProduct[] {
+  const rows: CachedProduct[] = [];
+  const seen = new Set<string>();
+
+  const add = (cartId: string, code: string | null | undefined, name: string, price: number, stock: number, vat: number) => {
+    const barcode = code?.trim();
+    if (!barcode) {
+      return;
+    }
+    const id = `${cartId}${CACHE_KEY_SEPARATOR}${barcode.toLowerCase()}`;
+    if (seen.has(id)) {
+      return;
+    }
+    seen.add(id);
+    rows.push({ id, barcode, name, price, stock, vat });
+  };
+
   for (const product of products) {
     if (!product.is_active || product.is_hidden) {
       continue;
     }
-    const parent = sellable(`p-${product.id}`, product.item_code || product.barcode, product.name, product.price, product.sale_vat ?? 0);
+    const cartId = `p-${product.id}`;
+    const vat = product.sale_vat ?? 0;
+    const stock = product.stock_quantity ?? 0;
     const codes = [product.barcode, product.item_code, product.design_code, ...(product.additional_barcodes ?? [])];
     for (const code of codes) {
-      const key = code?.trim().toLowerCase();
-      if (key) {
-        map.set(key, parent);
-      }
+      add(cartId, code, product.name, product.price, stock, vat);
     }
     for (const variant of product.variants ?? []) {
       const sku = variant.sku?.trim();
@@ -190,19 +206,53 @@ function indexCatalog(products: CatalogProduct[]) {
         continue;
       }
       const label = Object.values(variant.attributes ?? {}).filter(Boolean).join(' / ');
-      map.set(
-        sku.toLowerCase(),
-        sellable(
-          variant.id ? `v-${variant.id}` : `v-${sku}`,
-          sku,
-          label ? `${product.name} (${label})` : product.name,
-          variant.effective_price ?? product.price,
-          variant.sale_vat ?? product.sale_vat ?? 0,
-        ),
+      add(
+        variant.id ? `v-${variant.id}` : `v-${sku}`,
+        sku,
+        label ? `${product.name} (${label})` : product.name,
+        variant.effective_price ?? product.price,
+        variant.stock_quantity ?? 0,
+        variant.sale_vat ?? product.sale_vat ?? 0,
       );
     }
   }
-  return map;
+  return rows;
+}
+
+function sellableFromCache(row: CachedProduct): Sellable {
+  const marker = row.id.indexOf(CACHE_KEY_SEPARATOR);
+  const id = marker === -1 ? row.id : row.id.slice(0, marker);
+  return sellable(id, row.barcode, row.name, row.price, row.vat);
+}
+
+function toCatalogProduct(row: CatalogProduct & { stock?: number; vat_percent?: number }, index: number): CatalogProduct {
+  const id = Number(row.id);
+  return {
+    ...row,
+    id: Number.isInteger(id) && id > 0 ? id : index + 1,
+    name: row.name,
+    barcode: row.barcode,
+    price: Number(row.price) || 0,
+    stock_quantity: Number(row.stock_quantity ?? row.stock ?? 0),
+    sale_vat: Number(row.sale_vat ?? row.vat_percent ?? 0),
+    is_active: row.is_active !== false,
+    is_hidden: Boolean(row.is_hidden),
+  };
+}
+
+async function fetchActiveCatalog() {
+  const payload = await fetchJson<ProductTable | Array<CatalogProduct & { stock?: number; vat_percent?: number }>>('/api/products');
+  const rows = Array.isArray(payload) ? payload : (payload.items ?? []);
+  return rows.map(toCatalogProduct);
+}
+
+async function replaceProductCache(products: CatalogProduct[]) {
+  const rows = catalogRows(products);
+  await db.transaction('rw', db.products, async () => {
+    await db.products.clear();
+    await db.products.bulkPut(rows);
+  });
+  return rows.length;
 }
 
 function phoneDigits(value: string) {
@@ -468,8 +518,6 @@ export default function PosPage() {
   const [scanCode, setScanCode] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
-  const [cachedCount, setCachedCount] = useState(0);
-  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'ready' | 'offline'>('idle');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [heldInvoices, setHeldInvoices] = useState<HeldInvoice[]>([]);
@@ -517,30 +565,19 @@ export default function PosPage() {
   paymentMethodsRef.current = paymentMethods;
   const [receipt, setReceipt] = useState<SaleReceipt | null>(null);
   const [clock, setClock] = useState('11 Oct 2026');
-  const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
-  const { data: firstPage } = useApi<ProductTable>(CATALOG_PAGE);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncGeneration = useRef(0);
+  const cachedCount = useLiveQuery(async () => {
+    try {
+      return await db.products.count();
+    } catch {
+      return 0;
+    }
+  }, [], 0);
 
   useEffect(() => {
     setHeldInvoices(readHeldInvoices());
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void db.products
-      .count()
-      .then((count) => {
-        if (!cancelled) {
-          setCachedCount(count);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCachedCount(0);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   useEffect(() => {
@@ -617,33 +654,45 @@ export default function PosPage() {
     }
   }, [dob]);
 
-  useEffect(() => {
-    if (!firstPage) {
-      return;
-    }
-    const firstItems = firstPage.items ?? [];
-    setCatalog(firstItems);
-    const pages = firstPage.pages ?? 1;
-    if (pages <= 1) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const items = [...firstItems];
-      for (let page = 2; page <= pages; page += 1) {
-        const next = await fetchJson<ProductTable>(`${API_BASE}/products/table?page=${page}&page_size=100&status=active`);
-        items.push(...(next.items ?? []));
+  const syncCatalog = useCallback(async (announce: boolean) => {
+    const generation = syncGeneration.current + 1;
+    syncGeneration.current = generation;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const items = await fetchActiveCatalog();
+      if (syncGeneration.current !== generation) {
+        return;
       }
-      if (!cancelled) {
-        setCatalog(items);
+      const count = await replaceProductCache(items);
+      if (syncGeneration.current !== generation) {
+        return;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [firstPage]);
+      if (announce) {
+        toast.success(`Synced ${count.toLocaleString()} product codes`);
+      }
+    } catch {
+      if (syncGeneration.current !== generation) {
+        return;
+      }
+      const message = 'Unable to sync products from the server. Saved items stay available offline.';
+      setSyncError(message);
+      if (announce) {
+        toast.error(message);
+      }
+    } finally {
+      if (syncGeneration.current === generation) {
+        setSyncing(false);
+      }
+    }
+  }, []);
 
-  const productIndex = useMemo(() => indexCatalog(catalog), [catalog]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void syncCatalog(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [syncCatalog]);
 
   useEffect(() => {
     const formatted = new Date().toLocaleString('en-GB', {
@@ -715,58 +764,28 @@ export default function PosPage() {
     });
   }
 
-  function acceptScan(product: Sellable) {
-    addProduct(product);
-    setScanCode('');
-    setScanNotice(null);
-    setCameraOpen(false);
-    focusBarcode();
-  }
-
-  async function syncProducts() {
-    setSyncState('syncing');
-    try {
-      const response = await fetch('/api/products', { headers: authHeaders(), cache: 'no-store' });
-      if (!response.ok) {
-        setSyncState(response.status >= 500 ? 'offline' : 'idle');
-        setScanNotice(response.status === 401 ? 'Sign in again to sync products.' : 'Unable to sync products.');
-        return;
-      }
-      const body = (await response.json()) as { products?: LocalProduct[] };
-      const rows = Array.isArray(body.products) ? body.products : [];
-      await replaceLocalProducts(rows);
-      const count = await db.products.count();
-      setCachedCount(count);
-      setSyncState('ready');
-      setStatus(`${count} products cached on this terminal.`);
-      setScanNotice(null);
-    } catch {
-      setSyncState('offline');
-      setScanNotice('Unable to sync. The cached catalog stays available.');
-    }
-  }
-
   async function submitScan(code: string) {
-    const cleaned = sanitizeBarcode(code);
-    if (!cleaned) {
-      setScanNotice('That barcode is not valid.');
+    const scannedCode = code.trim();
+    if (!scannedCode) {
       return;
     }
     try {
-      const row = await db.products.where('barcode').equals(cleaned).first();
-      if (row) {
-        acceptScan(sellable(row.cart_id, row.barcode, row.name, row.price, row.vat_percent));
+      const product =
+        (await db.products.where('barcode').equals(scannedCode).first()) ??
+        (await db.products.where('barcode').equalsIgnoreCase(scannedCode).first());
+      if (!product) {
+        const cached = await db.products.count();
+        setScanNotice(cached === 0 ? 'Sync products before scanning.' : 'No item matches that code.');
         return;
       }
+      addProduct(sellableFromCache(product));
+      setScanCode('');
+      setScanNotice(null);
+      setCameraOpen(false);
+      focusBarcode();
     } catch {
-      setSyncState('offline');
+      setScanNotice('Unable to read the saved product catalog.');
     }
-    const product = productIndex.get(cleaned.toLowerCase());
-    if (!product) {
-      setScanNotice('No item matches that code.');
-      return;
-    }
-    acceptScan(product);
   }
 
   function resolveCustomer(phone: string) {
@@ -1364,29 +1383,31 @@ export default function PosPage() {
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
           <div>
             <p className="text-base font-semibold text-slate-900 dark:text-slate-100">Bashundhara City</p>
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Terminal 01 · {clock}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              Terminal 01 · {clock} · {cachedCount.toLocaleString()} cached
+            </p>
+            <p
               role="status"
-              aria-live="polite"
-              className={`inline-flex min-h-8 items-center rounded-md px-2 text-xs font-semibold ${
-                syncState === 'offline'
-                  ? 'bg-red-600 text-white'
-                  : syncState === 'syncing'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-[#1e293b] text-slate-100'
+              className={`mt-1 inline-flex rounded px-2 py-0.5 text-xs font-semibold ${
+                syncing
+                  ? 'bg-blue-600 text-white'
+                  : !syncError && cachedCount > 0
+                    ? 'bg-emerald-700 text-white'
+                    : 'bg-red-600 text-white'
               }`}
             >
-              {syncState === 'syncing' ? 'Syncing' : syncState === 'offline' ? 'Offline' : `${cachedCount} cached`}
-            </span>
+              {syncing ? 'Syncing' : !syncError && cachedCount > 0 ? 'Online (Cached)' : 'Offline'}
+            </p>
+            {syncError ? <p className="text-xs font-medium text-rose-600">{syncError}</p> : null}
+          </div>
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => void syncProducts()}
-              disabled={syncState === 'syncing'}
-              className="min-h-[44px] rounded-md bg-[#1e293b] px-3 text-sm font-semibold text-white disabled:opacity-60"
+              onClick={() => void syncCatalog(true)}
+              disabled={syncing}
+              className="min-h-[44px] rounded-md border border-slate-300 bg-white px-4 text-sm font-bold text-slate-800 active:bg-slate-100 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
             >
-              {syncState === 'syncing' ? 'Syncing…' : 'Sync Products'}
+              {syncing ? 'Syncing…' : 'Sync Products'}
             </button>
             <button
               type="button"

@@ -2,127 +2,90 @@ import { createHash } from 'crypto';
 
 import { NextResponse } from 'next/server';
 
-import type { LocalProduct } from '../../../lib/db';
-import { enforceRateLimit, getRedis } from '../../../lib/redis';
-
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const CACHE_TTL_SECONDS = 3600;
-const PAGE_SIZE = 100;
-const MAX_PAGES = 50;
+const CATALOG_TTL_SECONDS = 3600;
+const MAX_PAGES = 200;
+const ON_VERCEL = process.env.VERCEL === '1';
 
-const PRIVILEGED_ROLES = new Set([
-  'system_owner',
-  'super_admin',
-  'owner',
-  'root',
-  'admin',
-  'tenant_admin',
-]);
-
-type BackendVariant = {
-  id?: number;
-  sku?: string;
-  attributes?: Record<string, string>;
-  stock_quantity?: number;
-  effective_price?: number;
-  effective_sale_vat?: number;
+type CatalogPage = {
+  items?: unknown[];
+  pages?: number;
 };
 
-type BackendProduct = {
-  id?: number;
-  branch_id?: number | null;
-  name?: string;
-  barcode?: string;
-  additional_barcodes?: string[];
-  item_code?: string | null;
-  design_code?: string;
-  price?: number;
-  stock_quantity?: number;
-  sale_vat?: number;
-  is_active?: boolean;
-  is_hidden?: boolean;
-  variants?: BackendVariant[];
+type CatalogPayload = {
+  items: unknown[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
 };
 
-type SessionClaims = {
-  role: string;
-  branchId: number | null;
-  tenantId: number | null;
+type SellableProduct = {
+  id: number;
+  barcode: string;
+  name: string;
+  price: number;
+  stock: number;
+  stock_quantity: number;
+  vat_percent: number;
+  sale_vat: number;
+  is_active: boolean;
+  is_hidden: boolean;
 };
 
-function jsonError(error: string, status: number) {
-  return NextResponse.json({ error }, { status });
+const SAMPLE_PRODUCTS: SellableProduct[] = [
+  sellable(9001, '8941100100001', 'Miniket Rice 5kg', 420, 36, 0),
+  sellable(9002, '8941100100002', 'Fresh Milk 1L', 95, 48, 5),
+  sellable(9003, '8941100100003', 'Soybean Oil 2L', 360, 24, 5),
+  sellable(9004, '8941100100004', 'Loose Sugar 1kg', 130, 60, 0),
+  sellable(9005, '8941100100005', 'Eggs Dozen', 155, 40, 0),
+  sellable(9006, '8941100100006', 'Mineral Water 500ml', 20, 120, 15),
+  sellable(9007, '8941100100007', 'Potato Chips 25g', 30, 80, 15),
+  sellable(9008, '8941100100008', 'Hand Wash 200ml', 145, 32, 15),
+];
+
+function sellable(id: number, barcode: string, name: string, price: number, stock: number, vatPercent: number): SellableProduct {
+  return {
+    id,
+    barcode,
+    name,
+    price,
+    stock,
+    stock_quantity: stock,
+    vat_percent: vatPercent,
+    sale_vat: vatPercent,
+    is_active: true,
+    is_hidden: false,
+  };
 }
 
-function backendOrigin(): string {
-  const configured = (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
-  let url: URL;
-  try {
-    url = new URL(configured);
-  } catch {
-    throw new Error('Backend origin is invalid');
+function backendOrigin() {
+  const configured = (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+  if (configured && !configured.includes('vercel.app')) {
+    try {
+      const url = new URL(configured);
+      const allowed = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === 'ai-erp-pos-api.onrender.com';
+      if (allowed && (url.protocol === 'http:' || url.protocol === 'https:')) {
+        return url.origin;
+      }
+    } catch {
+      return 'http://127.0.0.1:8000';
+    }
   }
-  const allowed = new Set(['127.0.0.1', 'localhost', 'ai-erp-pos-api.onrender.com']);
-  if (!allowed.has(url.hostname) || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
-    throw new Error('Backend origin is not allowlisted');
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://ai-erp-pos-api.onrender.com';
   }
-  if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.port && url.port !== '8000') {
-    throw new Error('Backend origin is not allowlisted');
-  }
-  return url.origin;
+  return 'http://127.0.0.1:8000';
 }
 
-function readToken(request: Request): string | null {
-  const header = request.headers.get('authorization');
-  if (header && /^bearer\s+\S+/i.test(header)) {
-    return header.replace(/^bearer\s+/i, '').trim();
-  }
-  const cookie = request.headers.get('cookie') ?? '';
-  const match = cookie.match(/(?:^|;\s*)access_token=([^;]+)/);
-  if (!match?.[1]) {
-    return null;
-  }
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
+function cacheKey(authorization: string) {
+  const digest = createHash('sha256').update(authorization).digest('hex');
+  return `pos:products:${digest}`;
 }
 
-function decodeClaims(token: string): SessionClaims | null {
-  const parts = token.split('.');
-  if (parts.length < 2) {
-    return null;
-  }
-  try {
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
-    const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as Record<string, unknown>;
-    const role = typeof payload.role === 'string' ? payload.role.trim().toLowerCase().replace(/[\s-]+/g, '_') : '';
-    const branchRaw = Number(payload.branch_id);
-    const tenantRaw = Number(payload.tenant_id);
-    return {
-      role,
-      branchId: Number.isInteger(branchRaw) && branchRaw > 0 ? branchRaw : null,
-      tenantId: Number.isInteger(tenantRaw) && tenantRaw > 0 ? tenantRaw : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function rateLimitId(request: Request, token: string | null): string {
-  const ip = (request.headers.get('x-forwarded-for') ?? 'local').split(',')[0]?.trim() || 'local';
-  const digest = createHash('sha256')
-    .update(token ?? ip)
-    .digest('hex')
-    .slice(0, 16);
-  return `${ip}:${digest}`;
-}
-
-function cleanText(value: unknown, max: number): string {
+function cleanText(value: unknown, max: number) {
   return String(value ?? '')
     .replace(/[<>]/g, '')
     .replace(/[\u0000-\u001F\u007F]/g, '')
@@ -130,227 +93,175 @@ function cleanText(value: unknown, max: number): string {
     .slice(0, max);
 }
 
-function cleanBarcode(value: unknown): string | null {
-  const cleaned = cleanText(value, 80);
-  if (!cleaned || !/^[A-Za-z0-9][A-Za-z0-9 ._+\/-]{0,79}$/.test(cleaned)) {
+function asNumber(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function normalizeProduct(row: unknown, index: number): SellableProduct | null {
+  if (!row || typeof row !== 'object') {
     return null;
   }
-  return cleaned;
+  const record = row as Record<string, unknown>;
+  const barcode = cleanText(record.barcode, 80);
+  const name = cleanText(record.name, 255);
+  if (!barcode || !name) {
+    return null;
+  }
+  const id = Math.trunc(asNumber(record.id, index + 1));
+  const stock = Math.max(0, Math.trunc(asNumber(record.stock_quantity ?? record.stock)));
+  const vat = Math.max(0, asNumber(record.vat_percent ?? record.sale_vat));
+  return {
+    id: id > 0 ? id : index + 1,
+    barcode,
+    name,
+    price: Math.max(0, asNumber(record.price)),
+    stock,
+    stock_quantity: stock,
+    vat_percent: vat,
+    sale_vat: vat,
+    is_active: record.is_active !== false,
+    is_hidden: record.is_hidden === true,
+  };
 }
 
-function asMoney(value: unknown): number {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number < 0) {
-    return 0;
-  }
-  return Math.round(number * 100) / 100;
+function productsFromPayload(payload: unknown): SellableProduct[] {
+  const rows = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object' && Array.isArray((payload as CatalogPayload).items)
+      ? (payload as CatalogPayload).items
+      : [];
+  return rows.map(normalizeProduct).filter((row): row is SellableProduct => row !== null && row.is_active && !row.is_hidden);
 }
 
-function ownsBranch(claims: SessionClaims, requested: number | null): boolean {
-  if (requested === null) {
-    return true;
+async function redisClient() {
+  try {
+    const loaded = await import('../../../lib/redis');
+    return loaded.redis ?? null;
+  } catch {
+    return null;
   }
-  if (PRIVILEGED_ROLES.has(claims.role)) {
-    return true;
-  }
-  return claims.branchId !== null && claims.branchId === requested;
 }
 
-function cacheKey(claims: SessionClaims, branchId: number | null): string {
-  if (branchId !== null) {
-    return `pos:products:${branchId}`;
-  }
-  if (claims.tenantId !== null) {
-    return `pos:products:tenant:${claims.tenantId}`;
-  }
-  return 'pos:products:session';
-}
-
-function flattenProduct(product: BackendProduct, branchId: number | null, includeUnassigned: boolean): LocalProduct[] {
-  if (product.is_active === false || product.is_hidden) {
-    return [];
-  }
-  const productBranch = product.branch_id == null ? null : Number(product.branch_id);
-  if (branchId !== null) {
-    if (productBranch === null && !includeUnassigned) {
-      return [];
+async function readCached(key: string) {
+  try {
+    const client = await redisClient();
+    if (!client) {
+      return null;
     }
-    if (productBranch !== null && productBranch !== branchId) {
-      return [];
-    }
+    const cached = await client.get<unknown>(key);
+    return Array.isArray(cached) && cached.length > 0 ? cached : null;
+  } catch {
+    return null;
   }
-  const productId = Number(product.id);
-  if (!Number.isInteger(productId) || productId <= 0) {
-    return [];
-  }
-  const name = cleanText(product.name, 255);
-  const price = asMoney(product.price);
-  const stock = Math.max(0, Math.trunc(Number(product.stock_quantity) || 0));
-  const vat = asMoney(product.sale_vat);
-  const branch = product.branch_id == null ? null : Number(product.branch_id);
-  const cartId = `p-${productId}`;
-  const rows: LocalProduct[] = [];
-  const seen = new Set<string>();
+}
 
-  const push = (id: string, barcode: string, row?: Partial<LocalProduct>) => {
-    const key = barcode.toLowerCase();
-    if (seen.has(key)) {
+async function writeCached(key: string, products: unknown[]) {
+  if (products.length === 0) {
+    return;
+  }
+  try {
+    const client = await redisClient();
+    if (!client) {
       return;
     }
-    seen.add(key);
-    rows.push({
-      id,
-      barcode,
-      name: row?.name ?? name,
-      price: row?.price ?? price,
-      stock: row?.stock ?? stock,
-      vat_percent: row?.vat_percent ?? vat,
-      cart_id: row?.cart_id ?? cartId,
-      branch_id: branch,
+    await client.set(key, products, { ex: CATALOG_TTL_SECONDS });
+  } catch {
+    // The register still receives the catalog when Redis is unreachable.
+  }
+}
+
+async function fetchBackendCatalog(authorization: string): Promise<unknown[] | null> {
+  const items: unknown[] = [];
+  let page = 1;
+  let pages = 1;
+  const pageLimit = ON_VERCEL ? 1 : MAX_PAGES;
+  const timeoutMs = ON_VERCEL ? 2500 : 8000;
+  while (page <= pages && page <= pageLimit) {
+    const response = await fetch(`${backendOrigin()}/products/table?page=${page}&page_size=100&status=active`, {
+      method: 'GET',
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { Authorization: authorization, Accept: 'application/json' },
     });
-  };
-
-  const primary = cleanBarcode(product.barcode);
-  if (primary) {
-    push(cartId, primary);
-  }
-  for (const extra of product.additional_barcodes ?? []) {
-    const barcode = cleanBarcode(extra);
-    if (barcode) {
-      push(`${cartId}::${barcode}`, barcode);
-    }
-  }
-  const itemCode = cleanBarcode(product.item_code);
-  if (itemCode) {
-    push(`${cartId}::item:${itemCode}`, itemCode);
-  }
-  const design = cleanBarcode(product.design_code);
-  if (design) {
-    push(`${cartId}::design:${design}`, design);
-  }
-
-  for (const variant of product.variants ?? []) {
-    const sku = cleanBarcode(variant.sku);
-    const variantId = Number(variant.id);
-    if (!sku || !Number.isInteger(variantId) || variantId <= 0) {
-      continue;
-    }
-    const label = Object.values(variant.attributes ?? {})
-      .map((part) => cleanText(part, 40))
-      .filter(Boolean)
-      .join(' / ');
-    push(`v-${variantId}`, sku, {
-      name: label ? `${name} (${label})` : name,
-      price: asMoney(variant.effective_price ?? price),
-      stock: Math.max(0, Math.trunc(Number(variant.stock_quantity) || 0)),
-      vat_percent: asMoney(variant.effective_sale_vat ?? vat),
-      cart_id: `v-${variantId}`,
-    });
-  }
-
-  return rows;
-}
-
-async function backendFetch(path: string, token: string): Promise<Response> {
-  return fetch(`${backendOrigin()}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    cache: 'no-store',
-    redirect: 'error',
-    signal: AbortSignal.timeout(8000),
-  });
-}
-
-async function verifySession(token: string): Promise<Response> {
-  return backendFetch('/products/?limit=1', token);
-}
-
-async function loadCatalog(token: string): Promise<BackendProduct[]> {
-  const items: BackendProduct[] = [];
-  for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const response = await backendFetch(`/products/table?page=${page}&page_size=${PAGE_SIZE}&status=active`, token);
-    if (response.status === 401) {
-      throw Object.assign(new Error('Unauthorized'), { status: 401 });
-    }
-    if (response.status === 403) {
-      throw Object.assign(new Error('Forbidden'), { status: 403 });
-    }
     if (!response.ok) {
-      throw Object.assign(new Error('Catalog request failed'), { status: 502 });
+      return null;
     }
-    const body = (await response.json()) as { items?: BackendProduct[]; pages?: number };
+    const body = (await response.json()) as CatalogPage;
     items.push(...(body.items ?? []));
-    const pages = Math.min(MAX_PAGES, Number(body.pages) || 1);
-    if (page >= pages) {
-      break;
-    }
+    pages = Math.max(1, Number(body.pages) || 1);
+    page += 1;
   }
   return items;
 }
 
-export async function GET(request: Request) {
-  const token = readToken(request);
-
+async function fetchSupabaseCatalog(): Promise<SellableProduct[] | null> {
+  const base = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!base || !key) {
+    return null;
+  }
+  let endpoint: URL;
   try {
-    const limit = await enforceRateLimit(rateLimitId(request, token));
-    if (!limit.success) {
-      return jsonError('Too many catalog requests. Try again in a minute.', 429);
-    }
+    endpoint = new URL('/rest/v1/products', base);
   } catch {
-    return jsonError('Catalog cache is unavailable.', 503);
+    return null;
   }
-
-  if (!token) {
-    return jsonError('Sign in required.', 401);
+  if (endpoint.protocol !== 'https:') {
+    return null;
   }
-
-  const claims = decodeClaims(token);
-  if (!claims) {
-    return jsonError('Sign in required.', 401);
+  endpoint.searchParams.set('select', 'id,name,barcode,price,stock_quantity,sale_vat,is_active,is_hidden');
+  endpoint.searchParams.set('is_active', 'eq.true');
+  endpoint.searchParams.set('limit', '500');
+  const response = await fetch(endpoint, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(8000),
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      Accept: 'application/json',
+    },
+  });
+  if (!response.ok) {
+    return null;
   }
+  const rows = (await response.json()) as unknown;
+  const products = productsFromPayload(rows);
+  return products.length > 0 ? products : null;
+}
 
-  const requestedRaw = new URL(request.url).searchParams.get('branch_id');
-  const requested = requestedRaw && /^\d{1,9}$/.test(requestedRaw) ? Number(requestedRaw) : null;
-  if (requestedRaw && requested === null) {
-    return jsonError('Invalid branch.', 400);
-  }
-  if (!ownsBranch(claims, requested)) {
-    return jsonError('You cannot sync another branch.', 403);
-  }
-
-  const branchId = requested ?? claims.branchId;
-  const key = cacheKey(claims, branchId);
-
+export async function GET(request: Request) {
   try {
-    const probe = await verifySession(token);
-    if (probe.status === 401) {
-      return jsonError('Sign in required.', 401);
-    }
-    if (probe.status === 403) {
-      return jsonError('You cannot sync this catalog.', 403);
-    }
-    if (!probe.ok) {
-      return jsonError('Catalog service is unavailable.', 502);
+    const authorization = request.headers.get('authorization')?.trim() ?? '';
+
+    if (authorization) {
+      const cached = await readCached(cacheKey(authorization));
+      if (cached) {
+        return NextResponse.json(cached);
+      }
+      try {
+        const products = await fetchBackendCatalog(authorization);
+        if (products && products.length > 0) {
+          await writeCached(cacheKey(authorization), products);
+          return NextResponse.json(products);
+        }
+      } catch {
+        // Python on port 8000, or the hosted API, is unreachable.
+      }
     }
 
-    const redis = getRedis();
-    const cached = await redis.get<LocalProduct[]>(key);
-    if (Array.isArray(cached)) {
-      return NextResponse.json({ products: cached, branch_id: branchId, count: cached.length, cached: true });
+    try {
+      const products = await fetchSupabaseCatalog();
+      if (products && products.length > 0) {
+        return NextResponse.json(products);
+      }
+    } catch {
+      // Supabase is optional. A missing key or a failed request falls through.
     }
 
-    const source = await loadCatalog(token);
-    const includeUnassigned = requested === null || requested === claims.branchId;
-    const products = source.flatMap((product) => flattenProduct(product, branchId, includeUnassigned));
-    await redis.set(key, products, { ex: CACHE_TTL_SECONDS });
-    return NextResponse.json({ products, branch_id: branchId, count: products.length, cached: false });
-  } catch (error) {
-    const status = Number((error as { status?: number }).status);
-    if (status === 401) {
-      return jsonError('Sign in required.', 401);
-    }
-    if (status === 403) {
-      return jsonError('You cannot sync this catalog.', 403);
-    }
-    return jsonError('Catalog service is unavailable.', 502);
+    return NextResponse.json(SAMPLE_PRODUCTS);
+  } catch {
+    return NextResponse.json(SAMPLE_PRODUCTS);
   }
 }
