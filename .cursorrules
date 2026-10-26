@@ -20,3 +20,25 @@ Type: Full-stack ERP & POS System
 - Before suggesting any new database model, check the existing schema in `backend/models.py`.
 - Always assume the development environment is Windows (PowerShell) and we are using a Python virtual environment (`venv`).
 - Next steps will involve building API routes for the created tables and integrating them with the frontend.
+
+
+# Cursor AI Agent Rules
+
+1. CONTEXT FIRST: Before writing or changing code, read `/docs/01_PRD.md` through `/docs/07_Security_Shield.md`.
+2. NO ASSUMPTIONS: Follow the tech stack in `04_TRD.md` strictly (Next.js frontend on port 3000, Python backend on port 8000, Dexie, Upstash Redis). Do not introduce new frameworks or databases without permission.
+3. OFFLINE-FIRST LOGIC: Ensure all POS checkout operations interact with local Dexie.js first, then sync to the backend asynchronously.
+4. UPDATE THE PLAN: After completing any requested feature, automatically mark the corresponding task as complete in `/docs/06_Plan.md`.
+
+# Cursor AI Agent Rules (Spec-Driven & Security-First)
+
+1. CONTEXT FIRST: Before executing any command, read all markdown files in `/docs` (`01_PRD.md` through `07_Security_Shield.md`).
+2. STRICT TECH STACK: Next.js frontend (port 3000), Python FastAPI backend (port 8000), Supabase (PostgreSQL), Upstash Redis, and Dexie.js.
+3. 20/20 SECURITY SHIELD ENFORCEMENT:
+   - Never expose API keys on the client side (`13. Server-Side API Keys`).
+   - Never store JWT or Auth tokens in `localStorage` or `Dexie.js`; always use `HttpOnly` cookies (`14. No localStorage Tokens`).
+   - Always enforce Server-Side RBAC in `rbac.py` and BOLA/Ownership checks on every API endpoint (`06. BOLA Fix` & `10. RBAC Guard`).
+   - Use parameterized queries/ORM only (`01. SQLi Block`) and sanitize all inputs (`02. XSS Sanitization`).
+   - Implement Redis-based rate limiting on auth and public endpoints (`07. API Rate Limiting`).
+   - Keep CORS restricted to whitelisted origins (`16. Strict CORS`) and never log sensitive tokens (`19. Redact Sensitive Logs`).
+4. OFFLINE-FIRST LOGIC: Barcode scanning and POS cart must query local Dexie.js (`src/lib/db.ts`) with zero network latency.
+5. UPDATE THE PLAN: Mark completed tasks in `/docs/06_Plan.md` after every implementation step.

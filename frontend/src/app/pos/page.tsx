@@ -10,6 +10,7 @@ import { ReprintModal } from '../../components/pos/ReprintModal';
 import { SEED as CUSTOMER_SEED, SearchCustomerModal, type PosCustomerRow } from '../../components/pos/SearchCustomerModal';
 import { AppShell } from '../../components/AppShell';
 import type { CatalogProduct } from '../../components/ProductEditor';
+import { db, replaceLocalProducts, sanitizeBarcode, type LocalProduct } from '../../lib/db';
 import { API_BASE, authHeaders } from '../../utils/api';
 import { decodeJwtPayload } from '../../utils/auth';
 import {
@@ -467,6 +468,8 @@ export default function PosPage() {
   const [scanCode, setScanCode] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
+  const [cachedCount, setCachedCount] = useState(0);
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'ready' | 'offline'>('idle');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [heldInvoices, setHeldInvoices] = useState<HeldInvoice[]>([]);
@@ -515,10 +518,29 @@ export default function PosPage() {
   const [receipt, setReceipt] = useState<SaleReceipt | null>(null);
   const [clock, setClock] = useState('11 Oct 2026');
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
-  const { data: firstPage, error: catalogError } = useApi<ProductTable>(CATALOG_PAGE);
+  const { data: firstPage } = useApi<ProductTable>(CATALOG_PAGE);
 
   useEffect(() => {
     setHeldInvoices(readHeldInvoices());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void db.products
+      .count()
+      .then((count) => {
+        if (!cancelled) {
+          setCachedCount(count);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCachedCount(0);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -693,25 +715,58 @@ export default function PosPage() {
     });
   }
 
-  function submitScan(code: string) {
-    const term = code.trim().toLowerCase();
-    if (!term) {
-      return;
-    }
-    if (!firstPage && !catalogError) {
-      setScanNotice('Products are still loading.');
-      return;
-    }
-    const product = productIndex.get(term);
-    if (!product) {
-      setScanNotice(catalogError ? 'Unable to load products from the server.' : 'No item matches that code.');
-      return;
-    }
+  function acceptScan(product: Sellable) {
     addProduct(product);
     setScanCode('');
     setScanNotice(null);
     setCameraOpen(false);
     focusBarcode();
+  }
+
+  async function syncProducts() {
+    setSyncState('syncing');
+    try {
+      const response = await fetch('/api/products', { headers: authHeaders(), cache: 'no-store' });
+      if (!response.ok) {
+        setSyncState(response.status >= 500 ? 'offline' : 'idle');
+        setScanNotice(response.status === 401 ? 'Sign in again to sync products.' : 'Unable to sync products.');
+        return;
+      }
+      const body = (await response.json()) as { products?: LocalProduct[] };
+      const rows = Array.isArray(body.products) ? body.products : [];
+      await replaceLocalProducts(rows);
+      const count = await db.products.count();
+      setCachedCount(count);
+      setSyncState('ready');
+      setStatus(`${count} products cached on this terminal.`);
+      setScanNotice(null);
+    } catch {
+      setSyncState('offline');
+      setScanNotice('Unable to sync. The cached catalog stays available.');
+    }
+  }
+
+  async function submitScan(code: string) {
+    const cleaned = sanitizeBarcode(code);
+    if (!cleaned) {
+      setScanNotice('That barcode is not valid.');
+      return;
+    }
+    try {
+      const row = await db.products.where('barcode').equals(cleaned).first();
+      if (row) {
+        acceptScan(sellable(row.cart_id, row.barcode, row.name, row.price, row.vat_percent));
+        return;
+      }
+    } catch {
+      setSyncState('offline');
+    }
+    const product = productIndex.get(cleaned.toLowerCase());
+    if (!product) {
+      setScanNotice('No item matches that code.');
+      return;
+    }
+    acceptScan(product);
   }
 
   function resolveCustomer(phone: string) {
@@ -1311,13 +1366,36 @@ export default function PosPage() {
             <p className="text-base font-semibold text-slate-900 dark:text-slate-100">Bashundhara City</p>
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Terminal 01 · {clock}</p>
           </div>
-          <button
-            type="button"
-            onClick={() => setIsReprintOpen(true)}
-            className="min-h-[44px] rounded-md bg-orange-500 px-4 text-sm font-bold text-white active:bg-orange-600"
-          >
-            Reprint
-          </button>
+          <div className="flex items-center gap-2">
+            <span
+              role="status"
+              aria-live="polite"
+              className={`inline-flex min-h-8 items-center rounded-md px-2 text-xs font-semibold ${
+                syncState === 'offline'
+                  ? 'bg-red-600 text-white'
+                  : syncState === 'syncing'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-[#1e293b] text-slate-100'
+              }`}
+            >
+              {syncState === 'syncing' ? 'Syncing' : syncState === 'offline' ? 'Offline' : `${cachedCount} cached`}
+            </span>
+            <button
+              type="button"
+              onClick={() => void syncProducts()}
+              disabled={syncState === 'syncing'}
+              className="min-h-[44px] rounded-md bg-[#1e293b] px-3 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {syncState === 'syncing' ? 'Syncing…' : 'Sync Products'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsReprintOpen(true)}
+              className="min-h-[44px] rounded-md bg-orange-500 px-4 text-sm font-bold text-white active:bg-orange-600"
+            >
+              Reprint
+            </button>
+          </div>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
